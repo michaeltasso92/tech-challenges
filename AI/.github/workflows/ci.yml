@@ -1,0 +1,48 @@
+name: CI
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.11', cache: 'pip' }
+
+      - name: Lint
+        run: |
+          python -m pip install -U pip ruff
+          ruff check .
+
+      - name: Parser tests
+        working-directory: AI/services/parser
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+          pytest -q -m "not slow"
+
+      - name: API tests
+        working-directory: AI/services/api
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+          pytest -q -m "not slow"
+
+      - name: UI tests (optional)
+        working-directory: AI/services/ui
+        run: |
+          pip install -r requirements.txt || true
+          pip install pytest || true
+          pytest -q -m "not slow" || true
+
+  docker-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build images
+        run: |
+          docker build -t ai-parser           AI/services/parser
+          docker build -t ai-trainer-bienc    AI/services/trainer-bienc
+          docker build -t ai-api              AI/services/api
+          docker build -t ai-ui               AI/services/ui
