@@ -14,13 +14,15 @@ Each microservice has its own test suite located in `services/{service_name}/tes
 
 ## Running Tests
 
-### Run All Tests
+### Unit Tests
+
+#### Run All Unit Tests
 ```bash
 cd AI
 python run_tests.py
 ```
 
-### Run Tests for Specific Service
+#### Run Tests for Specific Service
 ```bash
 python run_tests.py --service services/api
 python run_tests.py --service services/parser
@@ -29,21 +31,41 @@ python run_tests.py --service services/trainer-bienc
 python run_tests.py --service services/ui
 ```
 
-### Run Tests with Verbose Output
+#### Run Tests with Verbose Output
 ```bash
 python run_tests.py --verbose
 ```
 
-### Install Test Dependencies
+#### Install Test Dependencies
 ```bash
 python run_tests.py --install-deps
 ```
 
-### Run Individual Test Files
+### Docker Tests
+
+#### Test All Docker Builds
 ```bash
-cd services/api
-pytest tests/test_api.py -v
+cd AI
+python test_docker.py
 ```
+
+#### Test Docker Builds + Runtime
+```bash
+python test_docker.py --runtime
+```
+
+#### Test Specific Service Docker Build
+```bash
+python test_docker.py --service api
+python test_docker.py --service ui --runtime
+```
+
+#### Verbose Docker Testing
+```bash
+python test_docker.py --verbose
+```
+
+For detailed Docker testing information, see [DOCKER_TESTS.md](DOCKER_TESTS.md).
 
 ## Test Coverage
 
@@ -85,6 +107,12 @@ pytest tests/test_api.py -v
 - **Data processing**: DataFrame creation and enrichment
 - **Search functionality**: Product name search and filtering
 - **Error handling**: Network failures, missing data
+
+### Docker Tests
+- **Build validation**: Dockerfile syntax and dependency installation
+- **Runtime testing**: Container startup and basic functionality
+- **Service isolation**: Network and resource isolation
+- **Cleanup**: Automatic image cleanup after testing
 
 ## Test Dependencies
 
@@ -142,14 +170,17 @@ Each service includes integration tests that verify:
 2. Add `__init__.py` file
 3. Create test files following naming convention
 4. Add service to `run_tests.py` services list
+5. Add Dockerfile for containerization
+6. Update `test_docker.py` if needed
 
 ## Continuous Integration
 
 The test suite is designed to run in CI/CD pipelines:
-- Fast execution (under 30 seconds for all tests)
-- No external dependencies
+- Fast execution (under 30 seconds for all unit tests)
+- No external dependencies for unit tests
 - Clear pass/fail reporting
 - Exit codes for automation
+- Docker testing for container validation
 
 ## Best Practices
 
@@ -159,3 +190,4 @@ The test suite is designed to run in CI/CD pipelines:
 4. **Edge cases**: Test error conditions and boundary cases
 5. **Documentation**: Include docstrings explaining test purpose
 6. **Maintenance**: Keep tests up to date with code changes
+7. **Docker testing**: Test container builds and runtime regularly
