@@ -65,8 +65,27 @@ class Recommender:
         logging.info(f"FAISS loaded: {self.faiss_ok} | items: {len(self.vocab) if self.faiss_ok else 0}")
         logging.info(f"Rule-based fallback loaded: left_json={len(self.left)} right_json={len(self.right)}")
 
+        # Seen/cold-start info
+        self.seen = {"train_items": [], "val_items": [], "test_items": []}
+        seen_p = os.path.join(MODEL_DIR, "seen_items.json")
+        try:
+            if os.path.exists(seen_p):
+                with open(seen_p) as f:
+                    self.seen = json.load(f)
+        except Exception as e:
+            logging.warning(f"Could not load seen_items.json: {e}")
+        self.seen_train = set(self.seen.get("train_items", []))
+        self.seen_val   = set(self.seen.get("val_items", []))
+        self.seen_test  = set(self.seen.get("test_items", []))
+
     def name_of(self, item_id: str) -> Optional[str]:
         return self.names.get(item_id)
+
+    def seen_status(self, item_id: str):
+        if item_id in self.seen_train: return "train"
+        if item_id in self.seen_val:   return "val"
+        if item_id in self.seen_test:  return "test"
+        return "unseen"
 
     def _faiss_neighbors(self, item_id: str, side: str, k: int):
         if not self.faiss_ok: return None
@@ -101,4 +120,11 @@ class Recommender:
         r = [d for d in r if d["item"] != item_id]
         l = self._pad_with_fallback(l, "left",  item_id, k)[:k]
         r = self._pad_with_fallback(r, "right", item_id, k)[:k]
-        return {"left": self._enrich(l), "right": self._enrich(r)}
+        result = {"left": self._enrich(l), "right": self._enrich(r)}
+        # annotate query status
+        result["query_seen"] = self.seen_status(item_id)
+        # annotate each neighbor (helpful in debug)
+        for side in ("left","right"):
+            for d in result[side]:
+                d["seen"] = self.seen_status(d["item"])
+        return result

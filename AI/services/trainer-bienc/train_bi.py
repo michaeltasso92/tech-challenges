@@ -68,7 +68,7 @@ class BiEncoderTrainer:
         logging.info(f"text_map built for {len(txt):,} items")
         return txt
 
-    def mine_pairs(self, parsed_path: str) -> Tuple[pd.DataFrame,pd.DataFrame]:
+    def mine_pairs_from_df(self, parsed_path: str) -> Tuple[pd.DataFrame,pd.DataFrame]:
         df = pd.read_parquet(parsed_path)
         df = df[(df["item_id"] != df["left_neighbor"]) & (df["item_id"] != df["right_neighbor"])]
         left  = df.dropna(subset=["left_neighbor"])[["item_id","left_neighbor"]].drop_duplicates().rename(columns={"left_neighbor":"nbr"})
@@ -110,12 +110,52 @@ class BiEncoderTrainer:
         faiss.write_index(idx_r, os.path.join(self.artifacts_dir,"right.index"))
         logging.info("Saved artifacts: embed_left.npy, embed_right.npy, item_vocab.json, left.index, right.index")
 
+    def split_by_guideline(self, df, train_ratio=0.8, val_ratio=0.1, seed=42):
+        guids = df["guideline_id"].dropna().unique()
+        rng = np.random.default_rng(seed)
+        rng.shuffle(guids)
+
+        n_train = int(len(guids) * train_ratio)
+        n_val = int(len(guids) * val_ratio)
+
+        train_guids = set(guids[:n_train])
+        val_guids   = set(guids[n_train:n_train+n_val])
+        test_guids  = set(guids[n_train+n_val:])
+
+        return (
+            df[df["guideline_id"].isin(train_guids)],
+            df[df["guideline_id"].isin(val_guids)],
+            df[df["guideline_id"].isin(test_guids)]
+        )
+
+
     def run(self):
         parsed_p = os.path.join(self.interim_dir,"parsed.parquet")
         if not os.path.exists(parsed_p): raise FileNotFoundError("parsed.parquet not found; run parser first")
 
         self.text_map = self.build_text_map()
-        left_df, right_df = self.mine_pairs(parsed_p)
+        # Full parsed data
+        df_all = pd.read_parquet(parsed_p)
+        df_all = df_all[(df_all["item_id"] != df_all["left_neighbor"]) &
+                        (df_all["item_id"] != df_all["right_neighbor"])]
+
+        # Split by guideline
+        df_train, df_val, df_test = self.split_by_guideline(df_all)
+
+        # Mine train pairs
+        left_df, right_df = self.mine_pairs_from_df(df_train)  # new helper
+
+        # Save seen items for debug
+        seen = {
+            "train_items": sorted(set(left_df["item_id"]) | set(right_df["item_id"])),
+            "val_items": sorted(set(df_val["item_id"].unique())),
+            "test_items": sorted(set(df_test["item_id"].unique()))
+        }
+        with open(os.path.join(self.artifacts_dir, "seen_items.json"), "w") as f:
+            json.dump(seen, f)
+
+        logging.info(f"Train items: {len(seen['train_items'])}, Val items: {len(seen['val_items'])}, Test items: {len(seen['test_items'])}")
+
 
         left_ex  = self.to_examples(left_df,  self.text_map)
         right_ex = self.to_examples(right_df, self.text_map)

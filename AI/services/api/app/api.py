@@ -24,29 +24,38 @@ def _startup():
 @app.get("/health")
 def health(): return {"status":"ok"}
 
-@app.get("/recommend/{item_id}", response_model=RecOut)
-def recommend(item_id: str):
-    return {"item_id": item_id, **rec.get(item_id)}
+@app.get("/recommend/{item_id}")
+def recommend(item_id: str, k: int = Query(10, ge=1, le=100)):
+    out = rec.get(item_id, k=k)
+    return {"item_name": rec.name_of(item_id), **out}
 
 @app.get("/name/{item_id}")
 def name(item_id: str):
     return {"item_id": item_id, "name": rec.name_of(item_id)}
 
 @app.get("/names")
-def names(ids: str = Query(..., description="Comma-separated item ids")):
-    id_list = [x.strip() for x in ids.split(",") if x.strip()]
-    return {"names": {i: rec.name_of(i) for i in id_list}}
+def get_names(ids: Optional[str] = Query(None, description="Comma-separated item ids")):
+    if ids:
+        id_list = [x.strip() for x in ids.split(",") if x.strip()]
+        return {"names": {i: rec.name_of(i) for i in id_list}}
+    # no ids -> return full mapping {item_id: name}
+    return rec.names
 
 @app.get("/debug/model")
 def debug_model():
     return {
-        "model_dir": rec.MODEL_DIR,
+        "model_dir": MODEL_DIR,
         "faiss_ok": getattr(rec, "faiss_ok", False),
         "num_vocab_items": len(getattr(rec, "vocab", {})) if getattr(rec, "faiss_ok", False) else 0,
-        "has_left_index": os.path.exists(os.path.join(rec.MODEL_DIR, "left.index")),
-        "has_right_index": os.path.exists(os.path.join(rec.MODEL_DIR, "right.index")),
+        "has_left_index": os.path.exists(os.path.join(MODEL_DIR, "left.index")),
+        "has_right_index": os.path.exists(os.path.join(MODEL_DIR, "right.index")),
         "fallback_counts": {
             "left_json": len(getattr(rec, "left", {})),
             "right_json": len(getattr(rec, "right", {})),
         },
+        "seen_counts": {
+            "train": len(getattr(rec,"seen_train", set())),
+            "val":   len(getattr(rec,"seen_val", set())),
+            "test":  len(getattr(rec,"seen_test", set())),
+        }
     }

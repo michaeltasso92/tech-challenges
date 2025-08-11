@@ -13,7 +13,7 @@ names_path=os.path.join(a.inp,"item_names.parquet")
 if not os.path.exists(names_path):
     raise FileNotFoundError("item_names.parquet not found; run parser first")
 
-# Load names + (optional) brand/folders if you persisted them; else name-only
+# Load names + brand/folders if you persisted them; else name-only
 names=pd.read_parquet(names_path)        # index=item_id, col: "name"
 names=names.fillna("")
 try:

@@ -34,7 +34,7 @@ services:
     command: ["python","featurize_text.py","--in","/app/data/interim","--out","/app/models/artifacts"]
 
   trainer-bienc:
-    profiles: ["train"]           # won't start on plain `up`
+    profiles: ["train"]
     build: ./services/trainer-bienc
     env_file: .env
     volumes:
