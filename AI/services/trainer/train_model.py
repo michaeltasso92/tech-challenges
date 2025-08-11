@@ -10,7 +10,15 @@ os.makedirs(a.out, exist_ok=True)
 
 df=pd.read_parquet(os.path.join(a.inp,"parsed.parquet"))
 names_path = os.path.join(a.inp, "item_names.parquet")
-names = pd.read_parquet(names_path).to_dict()["name"]
+meta_df = pd.read_parquet(os.path.join(a.inp,"item_meta.parquet"))
+
+if os.path.exists(names_path):
+    names = pd.read_parquet(names_path)["name"].to_dict()  # index=item_id
+else:
+    names = {}
+
+
+df = df[(df["item_id"] != df["left_neighbor"]) & (df["item_id"] != df["right_neighbor"])]
 
 
 left=df.dropna(subset=["left_neighbor"]).groupby(
@@ -41,16 +49,12 @@ def score_side(df_pairs, item_col, nei_col, cnt_col="cnt", alpha=5.0):
 
 left_scores=score_side(left,"item_id","left_neighbor")
 right_scores=score_side(right,"item_id","right_neighbor")
-scored[i] = sorted(
-    [
-        {"item": n, "name": names.get(n, ""), "confidence": float(w[k])}
-        for k, (n, _) in enumerate(lst)
-    ],
-    key=lambda x: -x["confidence"]
-)
 
 with open(os.path.join(a.out,"left.json"),"w") as f: json.dump(left_scores,f)
 with open(os.path.join(a.out,"right.json"),"w") as f: json.dump(right_scores,f)
+with open(os.path.join(a.out,"item_names.json"),"w") as f:
+    json.dump(names, f)
+meta_df.to_json(os.path.join(models_dir, "item_meta.json"), orient="index")
 
 glob_left=(left.groupby("left_neighbor")["cnt"].sum()
            .sort_values(ascending=False).head(20).index.tolist())

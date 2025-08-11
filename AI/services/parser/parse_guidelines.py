@@ -1,6 +1,8 @@
 import argparse, os, json, glob
 import pandas as pd
 from tqdm import tqdm
+from collections import defaultdict
+
 
 CATALOG_TYPES = {
     "product","tester","visual","object3D","compositeObject3D",
@@ -60,6 +62,7 @@ def parse_file(path):
     gid = g.get("id") or os.path.basename(path)
     rows = []
     names = {}
+    metas = defaultdict(lambda: {"folders": set(), "markets": set()})
 
     seq_idx = 0
     for seq in iter_sequences(g):
@@ -71,6 +74,7 @@ def parse_file(path):
                 iid = child.get("id")
                 if iid and iid not in names:
                     names[iid] = child.get("name") or child.get("name2") or ""
+                add_meta(metas, child)
         if len(slot_ids) < 2:
             continue
         seq_idx += 1
@@ -85,7 +89,29 @@ def parse_file(path):
                 "left_neighbor": left_id,
                 "right_neighbor": right_id,
             })
-    return rows, names
+    return rows, names, metas
+
+def add_meta(meta_acc, item):
+    iid = item.get("id")
+    if not iid: return
+    m = meta_acc[iid]
+    # scalars: keep first non-empty
+    for k in ("brand","type","code","code2","code3","name","name2"):
+        v = item.get(k)
+        if v and k not in m:
+            m[k] = v
+    # lists: merge unique
+    if isinstance(item.get("folders"), list):
+        m.setdefault("folders", set()).update([str(x) for x in item["folders"] if x])
+    if isinstance(item.get("markets"), list):
+        ids = []
+        for mk in item["markets"]:
+            if isinstance(mk, dict) and mk.get("id"):
+                ids.append(str(mk["id"]))
+            elif isinstance(mk, str):
+                ids.append(mk)
+        if ids: m.setdefault("markets", set()).update(ids)
+
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
@@ -95,18 +121,52 @@ if __name__ == "__main__":
     os.makedirs(args.out, exist_ok=True)
 
     files = glob.glob(os.path.join(args.raw, "**/*.json"), recursive=True)
-    all_rows, all_names , empty = [], {}, 0
+    all_rows, all_names , all_meta, empty = [], {}, {}, 0
     for f in tqdm(files, desc="parse"):
-        r, nm = parse_file(f)
+        r, nm, mt = parse_file(f)
         if not r: empty += 1
         all_rows.extend(r)
-        all_names.update(nm)
+        # prefer first non-empty name seen
+        for k,v in nm.items():
+            all_names.setdefault(k, v)
+        # merge meta
+        for iid, m in mt.items():
+            dst = all_meta.setdefault(iid, {})
+            for k, v in m.items():
+                if isinstance(v, set):
+                    dst.setdefault(k, set()).update(v)
+                elif k not in dst and v:
+                    dst[k] = v
 
     df = pd.DataFrame(all_rows)
     outp = os.path.join(args.out, "parsed.parquet")
-    if len(df): 
+    if len(df):
         df.to_parquet(outp)
+
+    # names parquet (index=item_id)
+    if all_names:
         pd.Series(all_names, name="name").to_frame().to_parquet(
             os.path.join(args.out, "item_names.parquet")
         )
-    print(f"files={len(files)} empty={empty} rows={len(df)} out={outp if len(df) else 'n/a'}")
+
+    # meta parquet (index=item_id)
+    if all_meta:
+        # normalize: convert sets to sorted lists, choose best name and type/brand fallbacks
+        recs = []
+        for iid, m in all_meta.items():
+            folders = sorted(list(m.get("folders", set())))
+            markets = sorted(list(m.get("markets", set())))
+            recs.append({
+                "item_id": iid,
+                "brand": m.get("brand",""),
+                "type": m.get("type",""),
+                "folders": folders,
+                "markets": markets,
+                "code": m.get("code",""),
+                "code2": m.get("code2",""),
+                "code3": m.get("code3",""),
+            })
+        meta_df = pd.DataFrame.from_records(recs).set_index("item_id")
+        meta_df.to_parquet(os.path.join(args.out, "item_meta.parquet"))
+
+    print(f"files={len(files)} empty={empty} rows={len(df)}")

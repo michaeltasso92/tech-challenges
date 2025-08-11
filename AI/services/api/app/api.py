@@ -1,6 +1,6 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, Query
 from pydantic import BaseModel
-from typing import List, Dict
+from typing import List, Dict, Optional
 from .recommend import Recommender
 
 class Neighbor(BaseModel):
@@ -26,3 +26,12 @@ def health(): return {"status":"ok"}
 @app.get("/recommend/{item_id}", response_model=RecOut)
 def recommend(item_id: str):
     return {"item_id": item_id, **rec.get(item_id)}
+
+@app.get("/name/{item_id}")
+def name(item_id: str):
+    return {"item_id": item_id, "name": rec.name_of(item_id)}
+
+@app.get("/names")
+def names(ids: str = Query(..., description="Comma-separated item ids")):
+    id_list = [x.strip() for x in ids.split(",") if x.strip()]
+    return {"names": {i: rec.name_of(i) for i in id_list}}

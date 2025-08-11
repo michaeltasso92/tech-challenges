@@ -14,58 +14,104 @@ DEFAULT_ITEMS = [
     "5b65d592-6041-11ed-b2f6-028cc0c9a267",
 ]
 
-st.set_page_config(page_title="IWD Recommender", page_icon="🧠", layout="wide")
-st.title("🧠 IWD Product Placement Recommender")
-st.caption("Enter an item ID to get left/right placement suggestions with confidence scores.")
+st.set_page_config(page_title="IWD Recommender", page_icon="🛍️🏬", layout="wide")
+st.title("🛍️🏬 IWD Product Placement Recommender")
+st.caption("Select a product to get left/right placement suggestions with confidence scores.")
 
-col1, col2, col3 = st.columns([2,1,1])
+# --- Simple name cache in session state
+if "name_cache" not in st.session_state: st.session_state["name_cache"] = {}
+
+def fetch_name(item_id: str) -> str | None:
+    if not item_id: return None
+    cache = st.session_state["name_cache"]
+    if item_id in cache: return cache[item_id]
+    # Try a dedicated API (if you added it)
+    try:
+        r = requests.get(f"{API_BASE}/name/{item_id}", timeout=10)
+        if r.status_code == 200:
+            name = r.json().get("name") or None
+            cache[item_id] = name
+            return name
+    except Exception:
+        pass
+    # As a fallback, try /recommend and hope the API returns item_name
+    try:
+        r = requests.get(f"{API_BASE}/recommend/{item_id}", timeout=10)
+        if r.status_code == 200:
+            name = r.json().get("item_name") or None
+            cache[item_id] = name
+            return name
+    except Exception:
+        pass
+    cache[item_id] = None
+    return None
+
+def label_for(item_id: str) -> str:
+    name = fetch_name(item_id)
+    return f"{name} — {item_id}" if name else item_id
+
+# Prewarm labels for default items (non-blocking best effort)
+for _iid in DEFAULT_ITEMS:
+    try: fetch_name(_iid)
+    except Exception: pass
+
+# --- Controls
+col1, col2 = st.columns([2,1])
 with col1:
-    item = st.text_input("Item ID", value=DEFAULT_ITEMS[0], help="Paste a catalog item id")
+    selected_id = st.selectbox(
+        "Product",
+        options=DEFAULT_ITEMS,
+        format_func=label_for,
+        index=0
+    )
 with col2:
     k = st.number_input("Top-K", min_value=1, max_value=50, value=10, step=1)
-with col3:
-    if st.button("Recommend", use_container_width=True):
-        st.session_state["trigger"] = True
 
+run = st.button("Recommend", use_container_width=True)
 st.divider()
 
-if "trigger" in st.session_state and st.session_state["trigger"]:
+if run:
     with st.spinner("Querying API..."):
         try:
-            r = requests.get(f"{API_BASE}/recommend/{item}", timeout=15)
+            r = requests.get(f"{API_BASE}/recommend/{selected_id}", timeout=20)
             r.raise_for_status()
             payload = r.json()
         except Exception as e:
             st.error(f"API error: {e}")
             st.stop()
 
-    st.subheader(f"Results for: `{payload.get('item_id', item)}`")
-    left_df = pd.DataFrame(payload["left"][:k])
-    right_df = pd.DataFrame(payload["right"][:k])
+    # Resolve display name for the selected product
+    selected_name = payload.get("item_name") or fetch_name(selected_id) or selected_id
+    st.subheader(f"Results for: **{selected_name}**")
+
+    # Build neighbor dataframes; use names if present, else look them up
+    def enrich(df: pd.DataFrame) -> pd.DataFrame:
+        if df.empty: return df
+        # If API already included names, keep them; otherwise fetch
+        if "name" not in df.columns:
+            df["name"] = [fetch_name(x) for x in df["item"]]
+        df["neighbor"] = df.apply(lambda r: r["name"] if r["name"] else r["item"], axis=1)
+        return df[["neighbor","item","confidence"]]
+
+    left_df  = enrich(pd.DataFrame(payload.get("left",  [])[:k]))
+    right_df = enrich(pd.DataFrame(payload.get("right", [])[:k]))
 
     c1, c2 = st.columns(2)
     with c1:
         st.markdown("**⬅️ Left neighbors**")
         if len(left_df):
-            if "name" in left_df.columns:
-                left_df = left_df[["item","name","confidence"]]
-            st.dataframe(left_df.rename(columns={"item":"neighbor ID","name":"neighbor Name"}))
-            st.bar_chart(left_df.set_index("item")["confidence"])
+            st.dataframe(left_df.rename(columns={"item":"neighbor ID"}), use_container_width=True)
+            # Use neighbor names on the chart if available
+            chart_series = left_df.set_index("neighbor")["confidence"]
+            st.bar_chart(chart_series)
         else:
             st.info("No left neighbors found (fallback used).")
 
     with c2:
         st.markdown("**➡️ Right neighbors**")
         if len(right_df):
-            if "name" in right_df.columns:
-                right_df = right_df[["item","name","confidence"]]
-            st.dataframe(right_df.rename(columns={"item":"neighbor ID","name":"neighbor Name"}))
-            st.bar_chart(right_df.set_index("item")["confidence"])
+            st.dataframe(right_df.rename(columns={"item":"neighbor ID"}), use_container_width=True)
+            chart_series = right_df.set_index("neighbor")["confidence"]
+            st.bar_chart(chart_series)
         else:
             st.info("No right neighbors found (fallback used).")
-
-st.sidebar.header("Quick picks")
-for iid in DEFAULT_ITEMS:
-    if st.sidebar.button(iid):
-        st.session_state["trigger"] = True
-        st.experimental_rerun()
