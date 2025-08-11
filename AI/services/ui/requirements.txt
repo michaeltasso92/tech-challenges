@@ -1,3 +1,7 @@
-streamlit
-pandas
+streamlit>=1.25.0
+pandas>=1.5.0
 requests
+
+# Testing dependencies
+pytest>=7.0.0
+pytest-mock>=3.10.0

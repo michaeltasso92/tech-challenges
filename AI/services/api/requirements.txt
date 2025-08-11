@@ -1,6 +1,11 @@
-fastapi
+fastapi>=0.100.0
 uvicorn
 orjson
 python-dotenv
 numpy
 faiss-cpu
+
+# Testing dependencies
+pytest>=7.0.0
+pytest-mock>=3.10.0
+httpx>=0.24.0
