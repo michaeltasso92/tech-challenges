@@ -1,0 +1,4 @@
+fastapi
+uvicorn
+orjson
+python-dotenv
