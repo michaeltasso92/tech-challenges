@@ -1,4 +1,5 @@
 .idea/*
 .env
 data/
-models/
+AI/models/**
+!AI/models/.gitkeep
