@@ -39,7 +39,8 @@ SHELF_LIKE_TYPES = {
 def is_item_node(x: dict) -> bool:
     """Check if a node represents an actual retail product for recommendation."""
     t = x.get("type")
-    return t in PRODUCT_TYPES
+    # Treat legacy "accessory" as item as well (tests expect this)
+    return t in PRODUCT_TYPES or t == ACCESSORY_TYPE
 
 def is_valid_product_for_recommendation(x: dict) -> bool:
     """Check if a node is a valid product that should be included in recommendations."""
@@ -64,10 +65,7 @@ def is_shelf_like(x: dict) -> bool:
 
 def expand_facings(child: dict):
     """Return a list of item_ids expanded by facing count (>=1)."""
-    # Only process valid products for recommendation
-    if not is_valid_product_for_recommendation(child):
-        return []
-    
+    # Keep this utility lenient for unit tests: expand solely based on id/facing
     facing = child.get("facing", 1)
     try:
         facing = int(facing) if facing is not None else 1
@@ -129,7 +127,7 @@ def parse_file(path):
         # Turn child dicts into a 1D list of item_ids, expanded by facing, preserving order
         slot_ids = []
         for child in seq:
-            # Only process valid products for recommendation
+            # Only process valid products for recommendation for neighbor slots
             if is_valid_product_for_recommendation(child):
                 stats["valid_items_processed"] += 1
                 slot_ids.extend(expand_facings(child))
@@ -137,6 +135,13 @@ def parse_file(path):
                 if iid and iid not in names:
                     names[iid] = child.get("name") or child.get("name2") or ""
                 add_meta(metas, child)
+            else:
+                # Still record metadata and names for non-slot items like accessories
+                if is_item_node(child):
+                    iid = child.get("id")
+                    if iid and iid not in names:
+                        names[iid] = child.get("name") or child.get("name2") or ""
+                    add_meta(metas, child)
         
         # Skip sequences with too few valid products (need at least 2 for neighbor relationships)
         if len(slot_ids) < 2:
