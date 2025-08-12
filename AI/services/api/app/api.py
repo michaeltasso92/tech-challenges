@@ -1,5 +1,5 @@
 import os
-from fastapi import FastAPI, Query
+from fastapi import FastAPI, Query, HTTPException
 from pydantic import BaseModel
 from typing import List, Optional
 from .recommend import Recommender, MODEL_DIR
@@ -26,16 +26,30 @@ def health(): return {"status":"ok"}
 
 @app.get("/recommend/{item_id}")
 def recommend(item_id: str, k: int = Query(10, ge=1, le=100)):
-    out = rec.get(item_id, k=k)
-    return {"item_name": rec.name_of(item_id), **out}
+    try:
+        out = rec.get(item_id, k=k)
+        return {"item_name": rec.name_of(item_id), **out}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/name/{item_id}")
 def name(item_id: str):
-    return {"item_id": item_id, "name": rec.name_of(item_id)}
+    try:
+        return {"item_id": item_id, "name": rec.name_of(item_id)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/items")
+def get_items():
+    """Get all available items with their names"""
+    items = []
+    for item_id, name in rec.names.items():
+        items.append({"id": item_id, "name": name})
+    return items
 
 @app.get("/names")
 def get_names(ids: Optional[str] = Query(None, description="Comma-separated item ids")):
-    if ids:
+    if ids is not None:
         id_list = [x.strip() for x in ids.split(",") if x.strip()]
         return {"names": {i: rec.name_of(i) for i in id_list}}
     # no ids -> return full mapping {item_id: name}

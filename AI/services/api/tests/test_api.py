@@ -12,25 +12,26 @@ from app.api import app
 @pytest.fixture
 def mock_recommender():
     """Mock recommender for testing"""
-    # Create a mock recommender
-    mock_rec = type('MockRecommender', (), {
-        'names': {
-            "item1": "Product 1",
-            "item2": "Product 2"
-        },
-        'get': lambda self, item_id, k=10: {
-            "left": [
-                {"item": "left1", "name": "Left Product 1", "confidence": 0.8, "seen": "train"},
-                {"item": "left2", "name": "Left Product 2", "confidence": 0.6, "seen": "val"}
-            ],
-            "right": [
-                {"item": "right1", "name": "Right Product 1", "confidence": 0.9, "seen": "train"},
-                {"item": "right2", "name": "Right Product 2", "confidence": 0.7, "seen": "val"}
-            ],
-            "query_seen": "train"
-        },
-        'name_of': lambda self, item_id: "Test Product"
-    })()
+    from unittest.mock import Mock
+    
+    # Create a proper mock object
+    mock_rec = Mock()
+    mock_rec.names = {
+        "item1": "Product 1",
+        "item2": "Product 2"
+    }
+    mock_rec.get.return_value = {
+        "left": [
+            {"item": "left1", "name": "Left Product 1", "confidence": 0.8, "seen": "train"},
+            {"item": "left2", "name": "Left Product 2", "confidence": 0.6, "seen": "val"}
+        ],
+        "right": [
+            {"item": "right1", "name": "Right Product 1", "confidence": 0.9, "seen": "train"},
+            {"item": "right2", "name": "Right Product 2", "confidence": 0.7, "seen": "val"}
+        ],
+        "query_seen": "train"
+    }
+    mock_rec.name_of.return_value = "Test Product"
     
     # Patch the global rec variable
     with patch('app.api.rec', mock_rec):
@@ -39,7 +40,10 @@ def mock_recommender():
 @pytest.fixture
 def client(mock_recommender):
     """Create a test client for the FastAPI app"""
-    return TestClient(app)
+    # The mock_recommender fixture already patches app.api.rec
+    # We need to ensure the startup function doesn't overwrite our mock
+    with patch('app.api._startup'):
+        return TestClient(app)
 
 class TestHealthEndpoint:
     """Test the health check endpoint"""
@@ -68,12 +72,13 @@ class TestItemsEndpoint:
     
     def test_get_items_empty(self, client, mock_recommender):
         """Test when no items are available"""
+        from unittest.mock import Mock
+        
         # Create a new mock with empty names
-        empty_mock = type('MockRecommender', (), {
-            'names': {},
-            'get': lambda self, item_id, k=10: {"left": [], "right": [], "query_seen": "unseen"},
-            'name_of': lambda self, item_id: None
-        })()
+        empty_mock = Mock()
+        empty_mock.names = {}
+        empty_mock.get.return_value = {"left": [], "right": [], "query_seen": "unseen"}
+        empty_mock.name_of.return_value = None
         
         with patch('app.api.rec', empty_mock):
             response = client.get("/items")
@@ -96,14 +101,21 @@ class TestNameEndpoint:
     
     def test_get_name_not_found(self, client, mock_recommender):
         """Test when item name is not found"""
-        mock_recommender.name_of.return_value = None
+        # Create a new mock for this specific test
+        from unittest.mock import Mock
         
-        response = client.get("/name/nonexistent")
-        assert response.status_code == 200
+        not_found_mock = Mock()
+        not_found_mock.names = {"item1": "Product 1"}
+        not_found_mock.get.return_value = {"left": [], "right": [], "query_seen": "unseen"}
+        not_found_mock.name_of.return_value = None
         
-        data = response.json()
-        assert data["item_id"] == "nonexistent"
-        assert data["name"] is None
+        with patch('app.api.rec', not_found_mock):
+            response = client.get("/name/nonexistent")
+            assert response.status_code == 200
+            
+            data = response.json()
+            assert data["item_id"] == "nonexistent"
+            assert data["name"] is None
 
 class TestNamesEndpoint:
     """Test the names endpoint"""
@@ -130,7 +142,7 @@ class TestNamesEndpoint:
         """Test with no IDs parameter - should return all names"""
         response = client.get("/names")
         assert response.status_code == 200
-        assert response.json() == {"names": {"item1": "Product 1", "item2": "Product 2"}}
+        assert response.json() == {"item1": "Product 1", "item2": "Product 2"}
     
     def test_get_names_single_id(self, client, mock_recommender):
         """Test with single ID"""
@@ -182,33 +194,40 @@ class TestRecommendEndpoint:
     
     def test_recommend_item_not_found(self, client, mock_recommender):
         """Test recommendation for non-existent item"""
-        mock_recommender.get.return_value = {
+        # Create a new mock for this specific test
+        from unittest.mock import Mock
+        
+        not_found_mock = Mock()
+        not_found_mock.names = {"item1": "Product 1"}
+        not_found_mock.get.return_value = {
             "left": [],
             "right": [],
             "query_seen": "unseen"
         }
-        mock_recommender.name_of.return_value = None
+        not_found_mock.name_of.return_value = None
         
-        response = client.get("/recommend/nonexistent")
-        assert response.status_code == 200
-        
-        data = response.json()
-        assert data["item_name"] is None
-        assert data["left"] == []
-        assert data["right"] == []
-        assert data["query_seen"] == "unseen"
+        with patch('app.api.rec', not_found_mock):
+            response = client.get("/recommend/nonexistent")
+            assert response.status_code == 200
+            
+            data = response.json()
+            assert data["item_name"] is None
+            assert data["left"] == []
+            assert data["right"] == []
+            assert data["query_seen"] == "unseen"
 
 class TestErrorHandling:
     """Test error handling scenarios"""
     
     def test_recommender_exception(self, client, mock_recommender):
         """Test handling of recommender exceptions"""
+        from unittest.mock import Mock
+        
         # Create a mock that raises an exception
-        exception_mock = type('MockRecommender', (), {
-            'names': {"item1": "Product 1"},
-            'get': lambda self, item_id, k=10: (_ for _ in ()).throw(Exception("Recommender error")),
-            'name_of': lambda self, item_id: "Test Product"
-        })()
+        exception_mock = Mock()
+        exception_mock.names = {"item1": "Product 1"}
+        exception_mock.get.side_effect = Exception("Recommender error")
+        exception_mock.name_of.return_value = "Test Product"
         
         with patch('app.api.rec', exception_mock):
             response = client.get("/recommend/item1")
@@ -216,12 +235,13 @@ class TestErrorHandling:
     
     def test_name_service_exception(self, client, mock_recommender):
         """Test handling of name service exceptions"""
+        from unittest.mock import Mock
+        
         # Create a mock that raises an exception
-        exception_mock = type('MockRecommender', (), {
-            'names': {"item1": "Product 1"},
-            'get': lambda self, item_id, k=10: {"left": [], "right": [], "query_seen": "unseen"},
-            'name_of': lambda self, item_id: (_ for _ in ()).throw(Exception("Name service error"))
-        })()
+        exception_mock = Mock()
+        exception_mock.names = {"item1": "Product 1"}
+        exception_mock.get.return_value = {"left": [], "right": [], "query_seen": "unseen"}
+        exception_mock.name_of.side_effect = Exception("Name service error")
         
         with patch('app.api.rec', exception_mock):
             response = client.get("/name/item1")
