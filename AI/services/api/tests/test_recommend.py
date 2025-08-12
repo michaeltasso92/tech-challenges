@@ -49,15 +49,26 @@ class TestRecommender:
             "right1": "Right Product 1"
         }
     
-    @patch('app.recommend.load_artifacts')
     @patch('builtins.open', new_callable=mock_open)
     @patch('json.load')
-    def test_init_success(self, mock_json_load, mock_open, mock_load_artifacts, sample_data, sample_names):
+    def test_init_success(self, mock_json_load, mock_open, sample_data, sample_names):
         """Test successful initialization"""
-        mock_load_artifacts.return_value = (sample_data["left"], sample_data["right"], sample_data["fallback"])
-        mock_json_load.return_value = sample_names
+        # Mock json.load to return different data for different files
+        def json_load_side_effect(*args, **kwargs):
+            if "left.json" in str(args[0]):
+                return sample_data["left"]
+            elif "right.json" in str(args[0]):
+                return sample_data["right"]
+            elif "fallback.json" in str(args[0]):
+                return sample_data["fallback"]
+            elif "item_names.json" in str(args[0]):
+                return sample_names
+            else:
+                return {}
         
-        # Mock os.path.exists to return True
+        mock_json_load.side_effect = json_load_side_effect
+        
+        # Mock os.path.exists to return True for all files
         with patch('os.path.exists', return_value=True):
             recommender = Recommender()
         
@@ -66,25 +77,50 @@ class TestRecommender:
         assert recommender.fb == sample_data["fallback"]
         assert recommender.names == sample_names
     
-    @patch('app.recommend.load_artifacts')
     @patch('builtins.open', new_callable=mock_open)
-    def test_init_no_names_file(self, mock_open, mock_load_artifacts, sample_data):
+    @patch('json.load')
+    def test_init_no_names_file(self, mock_json_load, mock_open, sample_data):
         """Test initialization when names file doesn't exist"""
-        mock_load_artifacts.return_value = (sample_data["left"], sample_data["right"], sample_data["fallback"])
+        # Mock json.load to return data for other files but not names
+        def json_load_side_effect(*args, **kwargs):
+            if "left.json" in str(args[0]):
+                return sample_data["left"]
+            elif "right.json" in str(args[0]):
+                return sample_data["right"]
+            elif "fallback.json" in str(args[0]):
+                return sample_data["fallback"]
+            else:
+                return {}
         
-        # Mock os.path.exists to return False
-        with patch('os.path.exists', return_value=False):
+        mock_json_load.side_effect = json_load_side_effect
+        
+        # Mock os.path.exists to return False for names file
+        def exists_side_effect(path):
+            return "item_names.json" not in str(path)
+        
+        with patch('os.path.exists', side_effect=exists_side_effect):
             recommender = Recommender()
         
         assert recommender.names == {}
     
-    @patch('app.recommend.load_artifacts')
     @patch('builtins.open', new_callable=mock_open)
     @patch('json.load')
-    def test_init_json_error(self, mock_json_load, mock_open, mock_load_artifacts, sample_data):
+    def test_init_json_error(self, mock_json_load, mock_open, sample_data):
         """Test initialization when JSON loading fails"""
-        mock_load_artifacts.return_value = (sample_data["left"], sample_data["right"], sample_data["fallback"])
-        mock_json_load.side_effect = Exception("JSON error")
+        # Mock json.load to raise exception for names file
+        def json_load_side_effect(*args, **kwargs):
+            if "item_names.json" in str(args[0]):
+                raise Exception("JSON error")
+            elif "left.json" in str(args[0]):
+                return sample_data["left"]
+            elif "right.json" in str(args[0]):
+                return sample_data["right"]
+            elif "fallback.json" in str(args[0]):
+                return sample_data["fallback"]
+            else:
+                return {}
+        
+        mock_json_load.side_effect = json_load_side_effect
         
         with patch('os.path.exists', return_value=True):
             recommender = Recommender()

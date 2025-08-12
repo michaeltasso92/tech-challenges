@@ -19,19 +19,20 @@ def mock_recommender():
     """Mock recommender for testing"""
     with patch('app.api.rec') as mock_rec:
         # Mock the recommender instance
-        mock_rec.get_items.return_value = [
-            {"id": "item1", "name": "Product 1"},
-            {"id": "item2", "name": "Product 2"}
-        ]
+        mock_rec.names = {
+            "item1": "Product 1",
+            "item2": "Product 2"
+        }
         mock_rec.get.return_value = {
             "left": [
-                {"item": "left1", "name": "Left Product 1", "confidence": 0.8},
-                {"item": "left2", "name": "Left Product 2", "confidence": 0.6}
+                {"item": "left1", "name": "Left Product 1", "confidence": 0.8, "seen": "train"},
+                {"item": "left2", "name": "Left Product 2", "confidence": 0.6, "seen": "val"}
             ],
             "right": [
-                {"item": "right1", "name": "Right Product 1", "confidence": 0.9},
-                {"item": "right2", "name": "Right Product 2", "confidence": 0.7}
-            ]
+                {"item": "right1", "name": "Right Product 1", "confidence": 0.9, "seen": "train"},
+                {"item": "right2", "name": "Right Product 2", "confidence": 0.7, "seen": "val"}
+            ],
+            "query_seen": "train"
         }
         mock_rec.name_of.return_value = "Test Product"
         yield mock_rec
@@ -60,12 +61,10 @@ class TestItemsEndpoint:
         assert data[0]["name"] == "Product 1"
         assert data[1]["id"] == "item2"
         assert data[1]["name"] == "Product 2"
-        
-        mock_recommender.get_items.assert_called_once()
     
     def test_get_items_empty(self, client, mock_recommender):
         """Test when no items are available"""
-        mock_recommender.get_items.return_value = []
+        mock_recommender.names = {}
         
         response = client.get("/items")
         assert response.status_code == 200
@@ -117,6 +116,12 @@ class TestNamesEndpoint:
         assert response.status_code == 200
         assert response.json() == {"names": {}}
     
+    def test_get_names_no_ids(self, client, mock_recommender):
+        """Test with no IDs parameter - should return all names"""
+        response = client.get("/names")
+        assert response.status_code == 200
+        assert response.json() == {"names": {"item1": "Product 1", "item2": "Product 2"}}
+    
     def test_get_names_single_id(self, client, mock_recommender):
         """Test with single ID"""
         response = client.get("/names?ids=item1")
@@ -135,9 +140,10 @@ class TestRecommendEndpoint:
         assert response.status_code == 200
         
         data = response.json()
-        assert data["item_id"] == "item1"
+        assert data["item_name"] == "Test Product"
         assert "left" in data
         assert "right" in data
+        assert "query_seen" in data
         
         # Check left neighbors
         left_neighbors = data["left"]
@@ -145,6 +151,7 @@ class TestRecommendEndpoint:
         assert left_neighbors[0]["item"] == "left1"
         assert left_neighbors[0]["name"] == "Left Product 1"
         assert left_neighbors[0]["confidence"] == 0.8
+        assert left_neighbors[0]["seen"] == "train"
         
         # Check right neighbors
         right_neighbors = data["right"]
@@ -152,30 +159,34 @@ class TestRecommendEndpoint:
         assert right_neighbors[0]["item"] == "right1"
         assert right_neighbors[0]["name"] == "Right Product 1"
         assert right_neighbors[0]["confidence"] == 0.9
+        assert right_neighbors[0]["seen"] == "train"
         
-        mock_recommender.get.assert_called_once_with("item1", 10)
+        mock_recommender.get.assert_called_once_with("item1", k=10)
     
     def test_recommend_with_k_parameter(self, client, mock_recommender):
         """Test recommendation with custom k parameter"""
         response = client.get("/recommend/item1?k=5")
         assert response.status_code == 200
         
-        mock_recommender.get.assert_called_once_with("item1", 5)
+        mock_recommender.get.assert_called_once_with("item1", k=5)
     
     def test_recommend_item_not_found(self, client, mock_recommender):
         """Test recommendation for non-existent item"""
         mock_recommender.get.return_value = {
             "left": [],
-            "right": []
+            "right": [],
+            "query_seen": "unseen"
         }
+        mock_recommender.name_of.return_value = None
         
         response = client.get("/recommend/nonexistent")
         assert response.status_code == 200
         
         data = response.json()
-        assert data["item_id"] == "nonexistent"
+        assert data["item_name"] is None
         assert data["left"] == []
         assert data["right"] == []
+        assert data["query_seen"] == "unseen"
 
 class TestErrorHandling:
     """Test error handling scenarios"""
