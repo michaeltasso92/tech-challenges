@@ -34,7 +34,9 @@ def score_side(df_pairs, item_col, nei_col, cnt_col="cnt", alpha=5.0):
     total=df_pairs[cnt_col].sum()
     out={}
     for r in df_pairs.itertuples(index=False):
-        i=getattr(r,item_col); n=getattr(r,nei_col); c=getattr(r,cnt_col)
+        i=getattr(r,item_col)
+        n=getattr(r,nei_col)
+        c=getattr(r,cnt_col)
         p_xy=(c+alpha)/(total+alpha*len(item_tot))
         p_x=item_tot.loc[i]/item_tot.sum()
         p_y=nei_tot.loc[n]/nei_tot.sum()
@@ -43,7 +45,8 @@ def score_side(df_pairs, item_col, nei_col, cnt_col="cnt", alpha=5.0):
     scored={}
     for i,lst in out.items():
         arr=np.array([s for _,s in lst])
-        w=np.exp(arr-arr.max()); w=w/w.sum()
+        w=np.exp(arr-arr.max()) 
+        w=w/w.sum()
         scored[i]=sorted(
             [{"item":n,"confidence":float(w[k])} for k,(n,_) in enumerate(lst)],
             key=lambda x:-x["confidence"])
@@ -52,11 +55,13 @@ def score_side(df_pairs, item_col, nei_col, cnt_col="cnt", alpha=5.0):
 left_scores=score_side(left,"item_id","left_neighbor")
 right_scores=score_side(right,"item_id","right_neighbor")
 
-with open(os.path.join(a.out,"left.json"),"w") as f: json.dump(left_scores,f)
-with open(os.path.join(a.out,"right.json"),"w") as f: json.dump(right_scores,f)
+with open(os.path.join(a.out,"left.json"),"w") as f: 
+    json.dump(left_scores,f)
+with open(os.path.join(a.out,"right.json"),"w") as f: 
+    json.dump(right_scores,f)
 with open(os.path.join(a.out,"item_names.json"),"w") as f:
     json.dump(names, f)
-meta_df.to_json(os.path.join(models_dir, "item_meta.json"), orient="index")
+meta_df.to_json(os.path.join(a.inp, "item_meta.json"), orient="index")
 
 glob_left=(left.groupby("left_neighbor")["cnt"].sum()
            .sort_values(ascending=False).head(20).index.tolist())

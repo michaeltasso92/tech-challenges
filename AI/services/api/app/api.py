@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI, Query
 from pydantic import BaseModel
 from typing import List, Optional
-from .recommend import Recommender
+from .recommend import Recommender, MODEL_DIR
 
 class Neighbor(BaseModel):
     item: str
