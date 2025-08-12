@@ -2,7 +2,6 @@ import pytest
 import json
 import os
 import tempfile
-from unittest.mock import patch, mock_open
 import sys
 
 # Add the parent directory to the path

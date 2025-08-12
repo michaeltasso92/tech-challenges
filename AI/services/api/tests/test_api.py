@@ -1,7 +1,6 @@
 import pytest
 from fastapi.testclient import TestClient
-from unittest.mock import Mock, patch
-import json
+from unittest.mock import patch
 import os
 
 # Import the app after setting up the test environment

@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI, Query
 from pydantic import BaseModel
-from typing import List, Dict, Optional
+from typing import List, Optional
 from .recommend import Recommender
 
 class Neighbor(BaseModel):

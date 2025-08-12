@@ -1,4 +1,7 @@
-import argparse, os, json, glob
+import argparse
+import os
+import json
+import glob
 import pandas as pd
 from tqdm import tqdm
 from collections import defaultdict

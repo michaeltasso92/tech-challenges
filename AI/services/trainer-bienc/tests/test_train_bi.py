@@ -4,8 +4,8 @@ import numpy as np
 import json
 import tempfile
 import os
-from unittest.mock import Mock, patch, MagicMock
-from sentence_transformers import SentenceTransformer, InputExample
+from unittest.mock import Mock, patch
+from sentence_transformers import InputExample
 
 # Import the module to test
 import sys

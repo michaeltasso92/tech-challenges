@@ -1,10 +1,7 @@
 import pytest
-import pandas as pd
-import tempfile
 import os
 import sys
 from unittest.mock import patch, MagicMock
-import streamlit as st
 
 # Add the parent directory to the path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
@@ -12,7 +9,7 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 # Import the app functions
 from app import (
     norm, seen_badge, fetch_names, fetch_name, 
-    label_for, get_recs, to_df, render_list
+    label_for, get_recs, to_df
 )
 
 class TestHelperFunctions:

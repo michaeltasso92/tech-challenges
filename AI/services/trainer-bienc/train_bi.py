@@ -1,10 +1,13 @@
-import os, json, logging, argparse
+import os
+import json
+import logging
+import argparse
 os.environ["CUDA_VISIBLE_DEVICES"] = ""               # hard-disable CUDA
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
-import numpy as np, pandas as pd
+import numpy as np
+import pandas as pd
 from typing import Dict, Tuple, List
-from tqdm import tqdm
 from torch.utils.data import DataLoader
 import torch; torch.set_num_threads(int(os.getenv("TORCH_NUM_THREADS","4")))
 from sentence_transformers import SentenceTransformer, InputExample, losses, LoggingHandler

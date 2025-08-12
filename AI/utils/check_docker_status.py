@@ -2,7 +2,6 @@
 """
 Quick script to check Docker status of all AI microservices
 """
-import os
 from pathlib import Path
 
 def check_docker_status():
@@ -46,7 +45,7 @@ def check_docker_status():
     total_services = len(services_with_docker) + len(services_without_docker)
     docker_coverage = (len(services_with_docker) / total_services) * 100 if total_services > 0 else 0
     
-    print(f"\n📊 Summary:")
+    print("\n📊 Summary:")
     print(f"  Total services: {total_services}")
     print(f"  Dockerized: {len(services_with_docker)}")
     print(f"  Coverage: {docker_coverage:.1f}%")
@@ -54,7 +53,7 @@ def check_docker_status():
     # Check docker-compose.yml
     compose_path = Path("docker-compose.yml")
     if compose_path.exists():
-        print(f"\n✅ docker-compose.yml found")
+        print("\n✅ docker-compose.yml found")
         # Count services in docker-compose
         with open(compose_path) as f:
             content = f.read()
@@ -62,7 +61,7 @@ def check_docker_status():
                               if line.strip().startswith('  ') and ':' in line and not line.strip().startswith('    ')]
         print(f"  Services in compose: {len(compose_services)}")
     else:
-        print(f"\n❌ docker-compose.yml not found")
+        print("\n❌ docker-compose.yml not found")
     
     return len(services_with_docker), len(services_without_docker)
 

@@ -1,5 +1,7 @@
-import os, json, logging
-from typing import Dict, List, Optional
+import os
+import json
+import logging
+from typing import Optional
 import numpy as np
 
 TOP_K = int(os.getenv("TOP_K", "10"))

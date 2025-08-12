@@ -1,5 +1,8 @@
-import argparse, os, json, numpy as np, pandas as pd
-from tqdm import tqdm
+import argparse
+import os
+import json
+import numpy as np
+import pandas as pd
 from sentence_transformers import SentenceTransformer
 
 p=argparse.ArgumentParser()

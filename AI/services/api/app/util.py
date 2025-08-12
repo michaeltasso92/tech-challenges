@@ -1,4 +1,5 @@
-import os, json
+import os
+import json
 
 def load_artifacts(model_dir):
     with open(os.path.join(model_dir,"left.json")) as f: left=json.load(f)

@@ -1,10 +1,9 @@
 import pytest
 import pandas as pd
-import numpy as np
 import tempfile
 import os
 import json
-from unittest.mock import patch, mock_open
+from unittest.mock import patch
 import sys
 
 # Add the parent directory to the path
@@ -144,7 +143,6 @@ class TestTrainingWorkflow:
             # Mock command line arguments
             with patch('sys.argv', ['train_model.py', '--in', input_dir, '--out', output_dir]):
                 # Import and run the training script
-                import train_model
                 
                 # Check that output files were created
                 assert os.path.exists(os.path.join(output_dir, 'left.json'))
@@ -190,7 +188,6 @@ class TestTrainingWorkflow:
             # Mock command line arguments
             with patch('sys.argv', ['train_model.py', '--in', input_dir, '--out', output_dir]):
                 # Import and run the training script
-                import train_model
                 
                 # Check that output files were created
                 assert os.path.exists(os.path.join(output_dir, 'left.json'))

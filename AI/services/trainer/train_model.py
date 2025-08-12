@@ -1,4 +1,6 @@
-import argparse, os, json
+import argparse
+import os
+import json
 import pandas as pd
 import numpy as np
 

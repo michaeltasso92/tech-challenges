@@ -1,4 +1,8 @@
-import os, unicodedata, requests, pandas as pd, streamlit as st
+import os
+import unicodedata
+import requests
+import pandas as pd
+import streamlit as st
 
 API_BASE = os.getenv("API_BASE_URL","http://localhost:8000")
 TOP_K = 10
