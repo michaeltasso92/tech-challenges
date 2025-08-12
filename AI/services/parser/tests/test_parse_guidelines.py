@@ -194,7 +194,7 @@ class TestParseFile:
             temp_file = f.name
         
         try:
-            rows, names = parse_file(temp_file)
+            rows, names, metas = parse_file(temp_file)
             
             # Check rows
             assert len(rows) == 4  # 2 items * 2 positions (left/right neighbors)
@@ -221,7 +221,7 @@ class TestParseFile:
             temp_file = f.name
         
         try:
-            rows, names = parse_file(temp_file)
+            rows, names, metas = parse_file(temp_file)
             assert rows == []
             assert names == {}
         finally:
@@ -236,7 +236,7 @@ class TestParseFile:
             temp_file = f.name
         
         try:
-            rows, names = parse_file(temp_file)
+            rows, names, metas = parse_file(temp_file)
             # Should use filename as id
             assert len(rows) > 0
             assert all(r["guideline_id"] == os.path.basename(temp_file) for r in rows)
@@ -255,7 +255,7 @@ class TestParseFile:
             temp_file = f.name
         
         try:
-            rows, names = parse_file(temp_file)
+            rows, names, metas = parse_file(temp_file)
             # Should have no rows since we need at least 2 items for neighbors
             assert len(rows) == 0
             assert len(names) == 1  # But should still extract the name
@@ -276,7 +276,7 @@ class TestParseFile:
             temp_file = f.name
         
         try:
-            rows, names = parse_file(temp_file)
+            rows, names, metas = parse_file(temp_file)
             assert "acc1" in names
             assert names["acc1"] == "Accessory 1"
         finally:
@@ -326,7 +326,7 @@ class TestIntegration:
             temp_file = f.name
         
         try:
-            rows, names = parse_file(temp_file)
+            rows, names, metas = parse_file(temp_file)
             
             # Should have 6 rows (3 items * 2 positions)
             assert len(rows) == 6
