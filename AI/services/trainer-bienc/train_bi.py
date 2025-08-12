@@ -2,6 +2,7 @@ import os
 import json
 import logging
 import argparse
+import time
 os.environ["CUDA_VISIBLE_DEVICES"] = ""               # hard-disable CUDA
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
@@ -12,13 +13,16 @@ from torch.utils.data import DataLoader
 import torch; torch.set_num_threads(int(os.getenv("TORCH_NUM_THREADS","4")))
 from sentence_transformers import SentenceTransformer, InputExample, losses, LoggingHandler
 import faiss  # faiss-cpu
+import mlflow
+import mlflow.pytorch
 
 logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s",
                     level=logging.INFO, handlers=[LoggingHandler()])
 
 class BiEncoderTrainer:
     def __init__(self, base_model: str, interim_dir: str, artifacts_dir: str,
-                 epochs: int = 2, batch_size: int = 256, dim: int = 384, seed: int = 42):
+                 epochs: int = 2, batch_size: int = 256, dim: int = 384, seed: int = 42,
+                 experiment_name: str = "bi-encoder-training"):
         self.base_model = base_model
         self.interim_dir = interim_dir
         self.artifacts_dir = artifacts_dir
@@ -26,10 +30,34 @@ class BiEncoderTrainer:
         self.batch_size = batch_size
         self.dim = dim
         self.seed = seed
+        self.experiment_name = experiment_name
         self.text_map: Dict[str,str] = {}
         self.item2idx: Dict[str,int] = {}
         self.items: List[str] = []
         os.makedirs(self.artifacts_dir, exist_ok=True)
+
+        # Setup MLflow with retry logic
+        self.mlflow_enabled = False
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
+                mlflow.set_tracking_uri(tracking_uri)
+                mlflow.set_experiment(self.experiment_name)
+                
+                # Test connection
+                client = mlflow.tracking.MlflowClient()
+                client.list_experiments()
+                
+                logging.info(f"MLflow connected to {tracking_uri} (attempt {attempt + 1})")
+                self.mlflow_enabled = True
+                break
+            except Exception as e:
+                logging.warning(f"MLflow setup failed (attempt {attempt + 1}/{max_retries}): {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(2)  # Wait before retry
+                else:
+                    logging.warning("MLflow setup failed after all retries. Continuing without MLflow logging.")
 
     @staticmethod
     def _row_text(name: str, brand: str, folders, typ: str, code: str) -> str:
@@ -71,8 +99,7 @@ class BiEncoderTrainer:
         logging.info(f"text_map built for {len(txt):,} items")
         return txt
 
-    def mine_pairs_from_df(self, parsed_path: str) -> Tuple[pd.DataFrame,pd.DataFrame]:
-        df = pd.read_parquet(parsed_path)
+    def mine_pairs_from_df(self, df: pd.DataFrame) -> Tuple[pd.DataFrame,pd.DataFrame]:
         df = df[(df["item_id"] != df["left_neighbor"]) & (df["item_id"] != df["right_neighbor"])]
         left  = df.dropna(subset=["left_neighbor"])[["item_id","left_neighbor"]].drop_duplicates().rename(columns={"left_neighbor":"nbr"})
         right = df.dropna(subset=["right_neighbor"])[["item_id","right_neighbor"]].drop_duplicates().rename(columns={"right_neighbor":"nbr"})
@@ -87,15 +114,50 @@ class BiEncoderTrainer:
             if a and b: append(InputExample(texts=[a,b]))
         return ex
 
-    def train_model(self, examples: List[InputExample]) -> SentenceTransformer:
+    def train_model(self, examples: List[InputExample], model_type: str = "left") -> SentenceTransformer:
         model = SentenceTransformer(self.base_model, device="cpu")
         model.max_seq_length = 64
-        examples = examples[:2000]
+        #examples = examples[:2000]
         loader = DataLoader(examples, batch_size=self.batch_size, shuffle=True, drop_last=True, num_workers=0)
         loss = losses.MultipleNegativesRankingLoss(model)
         warmup = int(0.06 * self.epochs * len(loader))
         logging.info(f"Training {self.base_model} (CPU) epochs={self.epochs} batch={self.batch_size} warmup={warmup}")
-        model.fit(train_objectives=[(loader, loss)], epochs=self.epochs, warmup_steps=warmup, show_progress_bar=True, use_amp=False)
+
+        # Train model with optional MLflow logging
+        if self.mlflow_enabled:
+            try:
+                with mlflow.start_run(run_name=f"bi-encoder-{model_type}-training"):
+                    mlflow.log_params({
+                        "base_model": self.base_model,
+                        "epochs": self.epochs,
+                        "batch_size": self.batch_size,
+                        "warmup_steps": warmup,
+                        "model_type": model_type,
+                        "num_examples": len(examples),
+                        "embedding_dim": self.dim,
+                        "seed": self.seed
+                    })
+
+                    # Custom training loop
+                    model.fit(train_objectives=[(loader, loss)], epochs=self.epochs, warmup_steps=warmup, show_progress_bar=True, use_amp=False)
+
+                    # Log training metrics (skip model logging to avoid 404 errors)
+                    mlflow.log_metrics({
+                        "training_examples": len(examples),
+                        "vocab_size": len(self.text_map) if self.text_map else 0
+                    })
+
+                    logging.info(f"MLflow run completed for {model_type} model")
+            except Exception as e:
+                logging.warning(f"MLflow logging failed: {e}. Continuing without MLflow.")
+                # Fallback: train without MLflow
+                model.fit(train_objectives=[(loader, loss)], epochs=self.epochs, warmup_steps=warmup, show_progress_bar=True, use_amp=False)
+                logging.info(f"Training completed for {model_type} model (without MLflow)")
+        else:
+            # Train without MLflow
+            model.fit(train_objectives=[(loader, loss)], epochs=self.epochs, warmup_steps=warmup, show_progress_bar=True, use_amp=False)
+            logging.info(f"Training completed for {model_type} model (without MLflow)")
+
         return model
 
     def encode_all(self, model: SentenceTransformer) -> np.ndarray:
@@ -168,9 +230,9 @@ class BiEncoderTrainer:
         self.items = sorted(self.text_map.keys()); self.item2idx = {it:i for i,it in enumerate(self.items)}
 
         logging.info("Training LEFT bi-encoder (CPU)…")
-        model_left  = self.train_model(left_ex)
+        model_left  = self.train_model(left_ex, "left")
         logging.info("Training RIGHT bi-encoder (CPU)…")
-        model_right = self.train_model(right_ex)
+        model_right = self.train_model(right_ex, "right")
 
         logging.info("Encoding corpus with LEFT encoder (CPU)…")
         emb_left  = self.encode_all(model_left)
@@ -181,6 +243,29 @@ class BiEncoderTrainer:
 
         model_left.save(os.path.join(self.artifacts_dir,"bienc_left_model"))
         model_right.save(os.path.join(self.artifacts_dir,"bienc_right_model"))
+
+        # Log final metrics and artifacts
+        if self.mlflow_enabled:
+            try:
+                with mlflow.start_run(run_name="bi-encoder-final-metrics"):
+                    mlflow.log_metrics({
+                        "total_items": len(self.items),
+                        "left_embedding_dim": emb_left.shape[1],
+                        "right_embedding_dim": emb_right.shape[1],
+                        "left_embeddings_shape": emb_left.shape[0],
+                        "right_embeddings_shape": emb_right.shape[0]
+                    })
+
+                    # Log artifacts
+                    mlflow.log_artifact(self.artifacts_dir, "artifacts")
+
+                    logging.info(f"Final metrics logged: items={len(self.items)}, left_dim={emb_left.shape[1]}, right_dim={emb_right.shape[1]}")
+            except Exception as e:
+                logging.warning(f"MLflow final logging failed: {e}")
+                logging.info(f"Final metrics: items={len(self.items)}, left_dim={emb_left.shape[1]}, right_dim={emb_right.shape[1]}")
+        else:
+            logging.info(f"Final metrics: items={len(self.items)}, left_dim={emb_left.shape[1]}, right_dim={emb_right.shape[1]}")
+
         logging.info({"items": len(self.items), "left_dim": emb_left.shape[1], "right_dim": emb_right.shape[1]})
 
 if __name__ == "__main__":
@@ -191,5 +276,6 @@ if __name__ == "__main__":
     ap.add_argument("--epochs", type=int, default=2)
     ap.add_argument("--batch", type=int, default=256)
     ap.add_argument("--dim", type=int, default=384)
+    ap.add_argument("--experiment-name", default="bi-encoder-training", help="MLflow experiment name")
     args = ap.parse_args()
-    BiEncoderTrainer(args.base, args.inp, args.artifacts, args.epochs, args.batch, args.dim).run()
+    BiEncoderTrainer(args.base, args.inp, args.artifacts, args.epochs, args.batch, args.dim, args.experiment_name).run()

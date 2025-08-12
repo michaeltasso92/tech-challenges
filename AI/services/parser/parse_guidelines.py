@@ -2,16 +2,31 @@ import argparse
 import os
 import json
 import glob
+import logging
 import pandas as pd
 from tqdm import tqdm
 from collections import defaultdict
 
+# Setup logging
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
-CATALOG_TYPES = {
-    "product","tester","visual","object3D","compositeObject3D",
-    "pointOfSaleRepresentation","shoes","cloth","textileAccessory",
-    "storeComponent","makeupGrid"
+
+# Types that represent actual retail products for recommendation
+PRODUCT_TYPES = {
+    "product", "tester", "shoes", "cloth", "textileAccessory"
 }
+
+# Types that are display/marketing items (not actual products)
+DISPLAY_TYPES = {
+    "visual", "object3D", "compositeObject3D", "pointOfSaleRepresentation"
+}
+
+# Types that are infrastructure/store components (not products)
+INFRASTRUCTURE_TYPES = {
+    "storeComponent", "makeupGrid"
+}
+
+# Legacy support - keeping accessory for backward compatibility but filtering it out
 ACCESSORY_TYPE = "accessory"
 SHELF_LIKE_TYPES = {
     "shelf","verticalSeparator","bayHeader","bayFooter",
@@ -22,8 +37,26 @@ SHELF_LIKE_TYPES = {
 }
 
 def is_item_node(x: dict) -> bool:
+    """Check if a node represents an actual retail product for recommendation."""
     t = x.get("type")
-    return t in CATALOG_TYPES or t == ACCESSORY_TYPE
+    return t in PRODUCT_TYPES
+
+def is_valid_product_for_recommendation(x: dict) -> bool:
+    """Check if a node is a valid product that should be included in recommendations."""
+    if not is_item_node(x):
+        return False
+    
+    # Must have a valid ID
+    iid = x.get("id")
+    if not isinstance(iid, str) or not iid.strip():
+        return False
+    
+    # Must have some identifying information (name, brand, or code)
+    has_name = bool(x.get("name") or x.get("name2"))
+    has_brand = bool(x.get("brand"))
+    has_code = bool(x.get("code") or x.get("code2") or x.get("code3"))
+    
+    return has_name or has_brand or has_code
 
 def is_shelf_like(x: dict) -> bool:
     t = x.get("type")
@@ -31,15 +64,21 @@ def is_shelf_like(x: dict) -> bool:
 
 def expand_facings(child: dict):
     """Return a list of item_ids expanded by facing count (>=1)."""
-    # accessories don't have 'facing' in schema; treat as 1
+    # Only process valid products for recommendation
+    if not is_valid_product_for_recommendation(child):
+        return []
+    
     facing = child.get("facing", 1)
     try:
         facing = int(facing) if facing is not None else 1
-    except: facing = 1
+    except: 
+        facing = 1
     facing = max(1, facing)
+    
     iid = child.get("id")
-    # keep only items with a non-empty id
-    if not isinstance(iid, str) or not iid: return []
+    if not isinstance(iid, str) or not iid.strip():
+        return []
+    
     return [iid] * facing
 
 def iter_sequences(node):
@@ -66,20 +105,44 @@ def parse_file(path):
     rows = []
     names = {}
     metas = defaultdict(lambda: {"folders": set(), "markets": set()})
+    
+    # Statistics for data cleaning
+    stats = {
+        "total_sequences": 0,
+        "valid_sequences": 0,
+        "total_items_processed": 0,
+        "valid_items_processed": 0,
+        "items_by_type": defaultdict(int)
+    }
 
     seq_idx = 0
     for seq in iter_sequences(g):
+        stats["total_sequences"] += 1
+        
+        # Count all items by type for statistics
+        for child in seq:
+            if isinstance(child, dict):
+                stats["total_items_processed"] += 1
+                item_type = child.get("type", "unknown")
+                stats["items_by_type"][item_type] += 1
+        
         # Turn child dicts into a 1D list of item_ids, expanded by facing, preserving order
         slot_ids = []
         for child in seq:
-            if is_item_node(child):
+            # Only process valid products for recommendation
+            if is_valid_product_for_recommendation(child):
+                stats["valid_items_processed"] += 1
                 slot_ids.extend(expand_facings(child))
                 iid = child.get("id")
                 if iid and iid not in names:
                     names[iid] = child.get("name") or child.get("name2") or ""
                 add_meta(metas, child)
+        
+        # Skip sequences with too few valid products (need at least 2 for neighbor relationships)
         if len(slot_ids) < 2:
             continue
+        
+        stats["valid_sequences"] += 1
         seq_idx += 1
         for i, iid in enumerate(slot_ids):
             left_id  = slot_ids[i-1] if i > 0 else None
@@ -92,6 +155,17 @@ def parse_file(path):
                 "left_neighbor": left_id,
                 "right_neighbor": right_id,
             })
+    
+    # Log cleaning statistics if there's significant data
+    if stats["total_items_processed"] > 0:
+        logging.info(f"File {gid}: {stats['valid_items_processed']}/{stats['total_items_processed']} items kept "
+                    f"({stats['valid_items_processed']/stats['total_items_processed']*100:.1f}%)")
+        logging.info(f"File {gid}: {stats['valid_sequences']}/{stats['total_sequences']} sequences kept "
+                    f"({stats['valid_sequences']/stats['total_sequences']*100:.1f}%)")
+        if stats["items_by_type"]:
+            type_summary = ", ".join([f"{k}:{v}" for k, v in sorted(stats["items_by_type"].items())])
+            logging.info(f"File {gid}: Item types found: {type_summary}")
+    
     return rows, names, metas
 
 def add_meta(meta_acc, item):
@@ -114,6 +188,14 @@ def add_meta(meta_acc, item):
             elif isinstance(mk, str):
                 ids.append(mk)
         if ids: m.setdefault("markets", set()).update(ids)
+    # Extract image URLs
+    if isinstance(item.get("files"), list):
+        image_urls = []
+        for file_info in item["files"]:
+            if isinstance(file_info, dict) and file_info.get("fileURL"):
+                image_urls.append(file_info["fileURL"])
+        if image_urls:
+            m["image_urls"] = image_urls
 
 
 if __name__ == "__main__":
@@ -125,10 +207,17 @@ if __name__ == "__main__":
 
     files = glob.glob(os.path.join(args.raw, "**/*.json"), recursive=True)
     all_rows, all_names , all_meta, empty = [], {}, {}, 0
+    
+    # Overall statistics
+    total_files = len(files)
+    total_items_found = 0
+    
     for f in tqdm(files, desc="parse"):
         r, nm, mt = parse_file(f)
         if not r: empty += 1
         all_rows.extend(r)
+        total_items_found += len(nm)
+        
         # prefer first non-empty name seen
         for k,v in nm.items():
             all_names.setdefault(k, v)
@@ -168,8 +257,26 @@ if __name__ == "__main__":
                 "code": m.get("code",""),
                 "code2": m.get("code2",""),
                 "code3": m.get("code3",""),
+                "image_urls": m.get("image_urls", []),
             })
         meta_df = pd.DataFrame.from_records(recs).set_index("item_id")
         meta_df.to_parquet(os.path.join(args.out, "item_meta.parquet"))
 
+    # Final summary
     print(f"files={len(files)} empty={empty} rows={len(df)}")
+    print(f"Total unique items found: {len(all_names)}")
+    print(f"Data cleaning summary:")
+    print(f"  - Files processed: {total_files}")
+    print(f"  - Empty files: {empty}")
+    print(f"  - Valid neighbor relationships: {len(df)}")
+    print(f"  - Unique products: {len(all_names)}")
+    
+    if len(df) > 0:
+        # Show some sample data
+        print(f"\nSample of parsed data:")
+        print(df.head(10).to_string())
+        
+        # Show item frequency distribution
+        item_counts = df['item_id'].value_counts()
+        print(f"\nTop 10 most frequent items:")
+        print(item_counts.head(10).to_string())

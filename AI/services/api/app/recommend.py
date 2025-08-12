@@ -81,6 +81,38 @@ class Recommender:
     def name_of(self, item_id: str) -> Optional[str]:
         return self.names.get(item_id)
 
+    def get_image_urls(self, item_id: str) -> List[str]:
+        """Get image URLs for a specific item"""
+        print(f"DEBUG: get_image_urls called for {item_id}")  # Simple debug print
+        try:
+            import pandas as pd
+            meta_path = os.path.join(self.MODEL_DIR, "item_meta.parquet")
+            print(f"DEBUG: Meta path: {meta_path}")  # Simple debug print
+            if os.path.exists(meta_path):
+                print(f"DEBUG: Meta file exists")  # Simple debug print
+                meta_df = pd.read_parquet(meta_path)
+                print(f"DEBUG: Meta file loaded, shape: {meta_df.shape}")  # Simple debug print
+                if item_id in meta_df.index:
+                    print(f"DEBUG: Item {item_id} found in meta file")  # Simple debug print
+                    image_urls = meta_df.loc[item_id, "image_urls"]
+                    print(f"DEBUG: Image URLs: {image_urls}")  # Simple debug print
+                    print(f"DEBUG: Type of image_urls: {type(image_urls)}")  # Simple debug print
+                    # Convert to list if it's a pandas Series or other iterable
+                    if hasattr(image_urls, '__iter__') and not isinstance(image_urls, str):
+                        image_urls_list = list(image_urls)
+                        print(f"DEBUG: Converted to list: {image_urls_list}")  # Simple debug print
+                        return image_urls_list
+                    elif isinstance(image_urls, list):
+                        return image_urls
+                else:
+                    print(f"DEBUG: Item {item_id} not found in meta file index")  # Simple debug print
+            else:
+                print(f"DEBUG: Meta file not found at {meta_path}")  # Simple debug print
+            return []
+        except Exception as e:
+            print(f"DEBUG: Exception in get_image_urls: {e}")  # Simple debug print
+            return []
+
     def seen_status(self, item_id: str):
         if item_id in self.seen_train: return "train"
         if item_id in self.seen_val:   return "val"
@@ -93,13 +125,22 @@ class Recommender:
         if i is None: return None
         q = (self.E_left[i:i+1] if side == "left" else self.E_right[i:i+1])  # (1, dim)
         index = self.idx_l if side == "left" else self.idx_r
-        D, I = index.search(q, k + 5)
+        D, I = index.search(q, k + 10)  # Get more candidates to filter duplicates
         out, seen = [], {item_id}
+        seen_names = {self.name_of(item_id)}  # Track product names to avoid duplicates
+        
         for idx, score in zip(I[0], D[0]):
             if idx < 0: continue
             nid = self.rev_vocab.get(int(idx))
             if not nid or nid in seen: continue
+            
+            # Check if this is a duplicate product name
+            neighbor_name = self.name_of(nid)
+            if neighbor_name in seen_names:
+                continue  # Skip if we already have this product name
+                
             seen.add(nid)
+            seen_names.add(neighbor_name)
             out.append({"item": nid, "confidence": float(max(score, 0.0))})
             if len(out) >= k: break
         return out
@@ -113,11 +154,32 @@ class Recommender:
     def _enrich(self, lst):
         return [{"item": d["item"], "name": d.get("name") or self.name_of(d["item"]), "confidence": float(d["confidence"])} for d in lst]
 
+    def _deduplicate_by_name(self, recommendations, item_id: str):
+        """Remove duplicate product names from recommendations"""
+        seen_names = {self.name_of(item_id)}
+        deduplicated = []
+        
+        for rec in recommendations:
+            if rec["item"] == item_id:
+                continue  # Skip self
+                
+            neighbor_name = self.name_of(rec["item"])
+            if neighbor_name in seen_names:
+                continue  # Skip duplicate product names
+                
+            seen_names.add(neighbor_name)
+            deduplicated.append(rec)
+            
+        return deduplicated
+
     def get(self, item_id: str, k: int = TOP_K):
         l = self._faiss_neighbors(item_id, "left",  k) or self.left.get(item_id, [])
         r = self._faiss_neighbors(item_id, "right", k) or self.right.get(item_id, [])
-        l = [d for d in l if d["item"] != item_id]
-        r = [d for d in r if d["item"] != item_id]
+        
+        # Deduplicate by product name
+        l = self._deduplicate_by_name(l, item_id)[:k]
+        r = self._deduplicate_by_name(r, item_id)[:k]
+        
         l = self._pad_with_fallback(l, "left",  item_id, k)[:k]
         r = self._pad_with_fallback(r, "right", item_id, k)[:k]
         result = {"left": self._enrich(l), "right": self._enrich(r)}

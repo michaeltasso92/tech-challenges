@@ -8,14 +8,23 @@ API_BASE = os.getenv("API_BASE_URL","http://localhost:8000")
 TOP_K = 10
 SEEN_COLORS = {"train":"#2563eb","val":"#16a34a","test":"#f59e0b","unseen":"#6b7280"}
 
-# Fallback defaults if /names isn't available
-DEFAULT_ITEMS = [
-    "1771c4a1-d902-11e4-a7e5-0025904e7aec","1797ef88-d902-11e4-a7e5-0025904e7aec",
-    "17c45bee-d902-11e4-a7e5-0025904e7aec","31377edb-bc97-11ec-80d8-028cc0c9a267",
-    "1964dca0-bc97-11ec-80d8-028cc0c9a267","1797e209-d902-11e4-a7e5-0025904e7aec",
-    "d5d8df12-c3a1-11eb-a03c-064c87f59bd9","9df3b27c-c3a1-11eb-a03c-064c87f59bd9",
-    "b82c22c1-5b7d-11ed-b2f6-028cc0c9a267","5b65d592-6041-11ed-b2f6-028cc0c9a267",
+# Target items from the README (top 10 most frequent items)
+# NOTE: These items don't exist in the current dataset, so we're using the actual top 10
+TARGET_ITEMS = [
+    "b82c22c1-5b7d-11ed-b2f6-028cc0c9a267",  # Actual #1 (freq: 863)
+    "25c7c4cf-5b7e-11ed-b2f6-028cc0c9a267",  # Actual #2 (freq: 844)
+    "1772df19-d902-11e4-a7e5-0025904e7aec",  # Actual #3 (freq: 812)
+    "1e4361a6-d902-11e4-a7e5-0025904e7aec",  # Actual #4 (freq: 764)
+    "dbadc572-7277-11ee-aee6-028cc0c9a267",  # Actual #5 (freq: 754)
+    "0e16abdc-612a-11ee-aee6-028cc0c9a267",  # Actual #6 (freq: 672)
+    "fde1a0b2-6129-11ee-aee6-028cc0c9a267",  # Actual #7 (freq: 648)
+    "10c467dc-5b7e-11ed-b2f6-028cc0c9a267",  # Actual #8 (freq: 647)
+    "11f5b934-4500-11ef-bf5c-0ae80689e703",  # Actual #9 (freq: 643)
+    "2daed28e-ceff-11ed-b2f6-028cc0c9a267"   # Actual #10 (freq: 634)
 ]
+
+# Fallback defaults if /names isn't available
+DEFAULT_ITEMS = TARGET_ITEMS
 
 st.set_page_config(page_title="IWD Recommender", page_icon="🛍️", layout="wide")
 st.title("🛍️ IWD Product Placement Recommender")
@@ -56,16 +65,49 @@ def fetch_name(item_id:str):
 
 def label_for(item_id:str, names:dict)->str:
     n = names.get(item_id) or fetch_name(item_id)
-    return f"{n} — {item_id}" if n else item_id
+    if n:
+        return f"{n} — {item_id}"
+    else:
+        # Show a shortened UUID for items without names
+        short_id = item_id[:8] + "..." if len(item_id) > 8 else item_id
+        return f"Unknown Product ({short_id}) — {item_id}"
 
 def get_recs(item_id:str):
     r=requests.get(f"{API_BASE}/recommend/{item_id}",params={"k":TOP_K},timeout=30)
     r.raise_for_status()
     return r.json()
 
+def get_image_urls(item_id:str):
+    """Get image URLs for a specific item"""
+    try:
+        r = requests.get(f"{API_BASE}/images/{item_id}", timeout=10)
+        if r.ok:
+            data = r.json()
+            return data.get("image_urls", [])
+    except Exception:
+        pass
+    return []
+
+# Check for missing product names
 names = fetch_names()
+if names:
+    missing_count = len([item for item in TARGET_ITEMS if item not in names])
+    if missing_count > 0:
+        st.warning(f"⚠️ {missing_count}/10 target items are missing product names. Some recommendations may show as 'Unknown Product'.")
+
 all_ids = list(names.keys())
-popular_ids = sorted(all_ids, key=lambda x: (names.get(x) or x))[:300] if all_ids else DEFAULT_ITEMS
+
+# Create popular items list with target items prioritized at the top
+# Always include target items, even if they don't have names
+available_targets = [item for item in TARGET_ITEMS if item in all_ids]
+missing_targets = [item for item in TARGET_ITEMS if item not in all_ids]
+
+# Get remaining items sorted alphabetically (excluding target items)
+remaining_items = sorted([item for item in all_ids if item not in TARGET_ITEMS], 
+                       key=lambda x: (names.get(x) or x))[:290]  # Leave room for targets
+
+# Combine: available targets first, then missing targets, then remaining items
+popular_ids = available_targets + missing_targets + remaining_items
 
 # ---------- Controls (search + popular + paste) ----------
 cL, cR = st.columns([2,1])
@@ -95,14 +137,16 @@ with cL:
         choice = None
 
 with cR:
-    st.subheader("Popular items")
+    st.subheader("Target Items & Popular Products")
     selected_pop = st.selectbox(
-        "Select a popular item",
+        "Select from target items (top 10) or popular products",
         options=popular_ids,
         format_func=lambda x: label_for(x,names),
         index=0,
         key="popular_select"
     )
+    available_target_count = len([item for item in TARGET_ITEMS if item in all_ids])
+    st.caption(f"📋 {available_target_count}/10 target items available (actual top 10 most frequent items) • {len(popular_ids)} total products")
     st.caption("Or paste an Item ID (UUID or code):")
     typed_id = st.text_input("Item ID", key="typed_id")
 
@@ -124,14 +168,17 @@ if run and selected_id:
         except Exception as e:
             st.error(f"API error: {e}"); st.stop()
 
-    qname = names.get(selected_id) or fetch_name(selected_id) or selected_id
+    # Get the product name, with fallback for missing names
+    qname = names.get(selected_id) or fetch_name(selected_id)
+    if not qname:
+        # Show a shortened UUID for items without names
+        short_id = selected_id[:8] + "..." if len(selected_id) > 8 else selected_id
+        qname = f"Unknown Product ({short_id})"
     qseen = payload.get("query_seen","unseen")
-    st.markdown(
-        f"<div style='display:flex;align-items:center;gap:10px'><h3 style='margin:0'>{qname}</h3>{seen_badge(qseen)}</div>",
-        unsafe_allow_html=True
-    )
-    st.caption(f"Item ID: {selected_id}")
-
+    
+    # Get image URLs for the selected product
+    selected_images = get_image_urls(selected_id)
+    
     def to_df(items:list)->pd.DataFrame:
         if not items: return pd.DataFrame(columns=["neighbor","item","confidence","seen"])
         df=pd.DataFrame(items)
@@ -140,30 +187,154 @@ if run and selected_id:
         df["neighbor"]=df.apply(lambda r: r.get("name") or r["item"],axis=1)
         if "seen" not in df.columns: df["seen"]="unseen"
         if "confidence" not in df.columns: df["confidence"]=0.0
-        return df[["neighbor","item","confidence","seen"]]
+        # Add image URLs for each item
+        df["image_urls"] = [get_image_urls(item_id) for item_id in df["item"]]
+        return df[["neighbor","item","confidence","seen","image_urls"]]
 
     left_df  = to_df(payload.get("left",[])[:TOP_K])
     right_df = to_df(payload.get("right",[])[:TOP_K])
 
-    def render_list(title, df:pd.DataFrame):
-        st.subheader(title)
-        if df.empty:
-            st.info("No recommendations."); return
-        for _,r in df.iterrows():
-            st.markdown(
-                f"<div style='display:flex;justify-content:space-between;align-items:center;"
-                f"border:1px solid #e5e7eb;border-radius:10px;padding:8px 12px;margin-bottom:6px'>"
-                f"<div style='display:flex;flex-direction:column'>"
-                f"<div style='font-weight:600'>{r['neighbor']}</div>"
-                f"<div style='font-size:12px;color:#6b7280'>{r['item']}</div>"
-                f"</div>"
-                f"<div style='display:flex;align-items:center;gap:10px'>"
-                f"<div style='font-size:12px;color:#374151'>score: {float(r['confidence']):.3f}</div>"
-                f"{seen_badge(str(r['seen']))}"
-                f"</div>"
-                f"</div>", unsafe_allow_html=True
-            )
+    # Shelf-like layout using Streamlit native components
+    st.markdown("### Product Recommendations")
+    
+    # Create the main shelf container
+    left_col, center_col, right_col = st.columns([1, 0.8, 1])
+    
+    with left_col:
+        st.markdown("#### ⬅️ Left Shelf")
+        if left_df.empty:
+            st.info("No left neighbors found")
+        else:
+            for _, row in left_df.iterrows():
+                with st.container():
+                    # Get image URL for this item
+                    item_images = row['image_urls']
+                    image_html = ""
+                    if item_images:
+                        image_url = item_images[0]  # Use first image
+                        image_html = f'<img src="{image_url}" alt="{row["neighbor"]}" style="max-width: 80px; max-height: 80px; border-radius: 8px; margin-bottom: 10px; background: white; padding: 5px;"/>'
+                    
+                    st.markdown(f"""
+                    <div style="
+                        background: white;
+                        border-radius: 12px;
+                        padding: 15px;
+                        margin-bottom: 12px;
+                        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                        border-left: 4px solid #3b82f6;
+                        text-align: center;
+                    ">
+                        {image_html}
+                        <div style="font-weight: 600; color: #1e293b; margin-bottom: 5px; font-size: 14px;">
+                            {row['neighbor']}
+                        </div>
+                        <div style="font-size: 11px; color: #64748b; margin-bottom: 8px; font-family: monospace;">
+                            {row['item']}
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
+                            <span style="background: #f1f5f9; padding: 2px 8px; border-radius: 12px; color: #475569; font-weight: 500;">
+                                Score: {float(row['confidence']):.3f}
+                            </span>
+                            {seen_badge(str(row['seen']))}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
+    
+    with center_col:
+        # Display product image if available
+        if selected_images:
+            # Use the first image (usually the main product image)
+            main_image_url = selected_images[0]
+            st.markdown(f"""
+            <div style="
+                background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+                border-radius: 20px;
+                padding: 25px;
+                text-align: center;
+                color: white;
+                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+                margin: 20px 0;
+            ">
+                <img src="{main_image_url}" alt="{qname}" style="
+                    max-width: 150px;
+                    max-height: 150px;
+                    border-radius: 10px;
+                    margin-bottom: 15px;
+                    background: white;
+                    padding: 10px;
+                "/>
+                <h3 style="margin: 0 0 10px 0; font-size: 20px;">{qname}</h3>
+                <div style="margin-bottom: 15px;">{seen_badge(qseen)}</div>
+                <div style="font-size: 12px; opacity: 0.9; font-family: monospace;">{selected_id}</div>
+                <div style="margin-top: 15px; font-size: 14px; opacity: 0.8;">Selected Product</div>
+            </div>
+            """, unsafe_allow_html=True)
+        else:
+            # Fallback without image
+            st.markdown(f"""
+            <div style="
+                background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
+                border-radius: 20px;
+                padding: 25px;
+                text-align: center;
+                color: white;
+                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
+                margin: 20px 0;
+            ">
+                <h3 style="margin: 0 0 10px 0; font-size: 20px;">{qname}</h3>
+                <div style="margin-bottom: 15px;">{seen_badge(qseen)}</div>
+                <div style="font-size: 12px; opacity: 0.9; font-family: monospace;">{selected_id}</div>
+                <div style="margin-top: 15px; font-size: 14px; opacity: 0.8;">Selected Product</div>
+            </div>
+            """, unsafe_allow_html=True)
+    
+    with right_col:
+        st.markdown("#### Right Shelf ➡️")
+        if right_df.empty:
+            st.info("No right neighbors found")
+        else:
+            for _, row in right_df.iterrows():
+                with st.container():
+                    # Get image URL for this item
+                    item_images = row['image_urls']
+                    image_html = ""
+                    if item_images:
+                        image_url = item_images[0]  # Use first image
+                        image_html = f'<img src="{image_url}" alt="{row["neighbor"]}" style="max-width: 80px; max-height: 80px; border-radius: 8px; margin-bottom: 10px; background: white; padding: 5px;"/>'
+                    
+                    st.markdown(f"""
+                    <div style="
+                        background: white;
+                        border-radius: 12px;
+                        padding: 15px;
+                        margin-bottom: 12px;
+                        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+                        border-left: 4px solid #3b82f6;
+                        text-align: center;
+                    ">
+                        {image_html}
+                        <div style="font-weight: 600; color: #1e293b; margin-bottom: 5px; font-size: 14px;">
+                            {row['neighbor']}
+                        </div>
+                        <div style="font-size: 11px; color: #64748b; margin-bottom: 8px; font-family: monospace;">
+                            {row['item']}
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
+                            <span style="background: #f1f5f9; padding: 2px 8px; border-radius: 12px; color: #475569; font-weight: 500;">
+                                Score: {float(row['confidence']):.3f}
+                            </span>
+                            {seen_badge(str(row['seen']))}
+                        </div>
+                    </div>
+                    """, unsafe_allow_html=True)
 
-    colL,colR=st.columns(2)
-    with colL: render_list("⬅️ Left neighbors", left_df)
-    with colR: render_list("➡️ Right neighbors", right_df)
+    # Additional info below the shelf
+    st.markdown("---")
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("Left Neighbors", len(left_df))
+    with col2:
+        st.metric("Right Neighbors", len(right_df))
+    with col3:
+        total_recs = len(left_df) + len(right_df)
+        st.metric("Total Recommendations", total_recs)

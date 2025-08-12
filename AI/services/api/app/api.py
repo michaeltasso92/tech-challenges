@@ -55,6 +55,21 @@ def get_names(ids: Optional[str] = Query(None, description="Comma-separated item
     # no ids -> return full mapping {item_id: name}
     return rec.names
 
+@app.get("/images/{item_id}")
+def get_images(item_id: str):
+    """Get image URLs for a specific item"""
+    try:
+        print(f"API DEBUG: Getting images for {item_id}")
+        image_urls = rec.get_image_urls(item_id)
+        print(f"API DEBUG: Got image_urls: {image_urls}")
+        print(f"API DEBUG: Type of image_urls: {type(image_urls)}")
+        result = {"item_id": item_id, "image_urls": image_urls}
+        print(f"API DEBUG: Returning result: {result}")
+        return result
+    except Exception as e:
+        print(f"API DEBUG: Exception: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.get("/debug/model")
 def debug_model():
     return {

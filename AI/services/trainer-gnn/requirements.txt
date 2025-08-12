@@ -1,0 +1,12 @@
+--extra-index-url https://download.pytorch.org/whl/cpu
+
+torch==2.3.1+cpu
+dgl==1.1.2
+pandas
+numpy
+pyarrow
+tqdm
+packaging
+
+# MLflow for experiment tracking
+mlflow>=2.8.0

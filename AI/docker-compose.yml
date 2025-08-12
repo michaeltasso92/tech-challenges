@@ -34,15 +34,46 @@ services:
     command: ["python","featurize_text.py","--in","/app/data/interim","--out","/app/models/artifacts"]
 
   trainer-bienc:
-    profiles: ["train"]
     build: ./services/trainer-bienc
     env_file: .env
+    depends_on: 
+      mlflow:
+        condition: service_healthy
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_TRACKING_USERNAME: ""
+      MLFLOW_TRACKING_PASSWORD: ""
     volumes:
       - ./data:/app/data
       - ./models:/app/models
       - hf_cache:/root/.cache/huggingface   # speed up downloads
-    command: ["python","train_bi.py","--in","/app/data/interim","--artifacts","/app/models/artifacts","--base","sentence-transformers/all-MiniLM-L6-v2","--epochs","2","--batch","16"]
+    command: ["python","train_bi.py","--in","/app/data/interim","--artifacts","/app/models/artifacts","--base","sentence-transformers/all-MiniLM-L6-v2","--epochs","3","--batch","32"]
     restart: "no"
+
+  trainer-gnn:
+    build: ./services/trainer-gnn
+    env_file: .env
+    depends_on: [parser, trainer-bienc, mlflow]   # needs parsed.parquet + embed_left/right + vocab
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    volumes:
+      - ./data:/app/data:ro
+      - ./models:/app/models
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v2.14.2
+    command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri /mlruns --default-artifact-root /mlruns --workers 4
+    ports: ["5000:5000"]
+    volumes:
+      - ./mlruns:/mlruns
+    environment:
+      - MLFLOW_TRACKING_URI=http://localhost:5000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
 
   ui:
     build: ./services/ui

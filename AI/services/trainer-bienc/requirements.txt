@@ -10,6 +10,9 @@ pyarrow>=10.0.0
 tqdm>=4.64.0
 faiss-cpu>=1.7.0
 
+# MLflow for experiment tracking
+mlflow>=2.8.0
+
 # Testing dependencies
 pytest>=7.0.0
 pytest-mock>=3.10.0

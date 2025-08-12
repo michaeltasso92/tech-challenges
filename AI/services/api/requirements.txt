@@ -4,6 +4,8 @@ orjson
 python-dotenv
 numpy
 faiss-cpu
+pandas
+pyarrow
 
 # Testing dependencies
 pytest>=7.0.0
