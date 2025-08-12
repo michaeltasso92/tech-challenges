@@ -10,20 +10,15 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 from app.api import app
 
 @pytest.fixture
-def client():
-    """Create a test client for the FastAPI app"""
-    return TestClient(app)
-
-@pytest.fixture
 def mock_recommender():
     """Mock recommender for testing"""
-    with patch('app.api.rec') as mock_rec:
-        # Mock the recommender instance
-        mock_rec.names = {
+    # Create a mock recommender
+    mock_rec = type('MockRecommender', (), {
+        'names': {
             "item1": "Product 1",
             "item2": "Product 2"
-        }
-        mock_rec.get.return_value = {
+        },
+        'get': lambda self, item_id, k=10: {
             "left": [
                 {"item": "left1", "name": "Left Product 1", "confidence": 0.8, "seen": "train"},
                 {"item": "left2", "name": "Left Product 2", "confidence": 0.6, "seen": "val"}
@@ -33,9 +28,18 @@ def mock_recommender():
                 {"item": "right2", "name": "Right Product 2", "confidence": 0.7, "seen": "val"}
             ],
             "query_seen": "train"
-        }
-        mock_rec.name_of.return_value = "Test Product"
+        },
+        'name_of': lambda self, item_id: "Test Product"
+    })()
+    
+    # Patch the global rec variable
+    with patch('app.api.rec', mock_rec):
         yield mock_rec
+
+@pytest.fixture
+def client(mock_recommender):
+    """Create a test client for the FastAPI app"""
+    return TestClient(app)
 
 class TestHealthEndpoint:
     """Test the health check endpoint"""
@@ -64,11 +68,17 @@ class TestItemsEndpoint:
     
     def test_get_items_empty(self, client, mock_recommender):
         """Test when no items are available"""
-        mock_recommender.names = {}
+        # Create a new mock with empty names
+        empty_mock = type('MockRecommender', (), {
+            'names': {},
+            'get': lambda self, item_id, k=10: {"left": [], "right": [], "query_seen": "unseen"},
+            'name_of': lambda self, item_id: None
+        })()
         
-        response = client.get("/items")
-        assert response.status_code == 200
-        assert response.json() == []
+        with patch('app.api.rec', empty_mock):
+            response = client.get("/items")
+            assert response.status_code == 200
+            assert response.json() == []
 
 class TestNameEndpoint:
     """Test the name endpoint"""
@@ -193,17 +203,29 @@ class TestErrorHandling:
     
     def test_recommender_exception(self, client, mock_recommender):
         """Test handling of recommender exceptions"""
-        mock_recommender.get.side_effect = Exception("Recommender error")
+        # Create a mock that raises an exception
+        exception_mock = type('MockRecommender', (), {
+            'names': {"item1": "Product 1"},
+            'get': lambda self, item_id, k=10: (_ for _ in ()).throw(Exception("Recommender error")),
+            'name_of': lambda self, item_id: "Test Product"
+        })()
         
-        response = client.get("/recommend/item1")
-        assert response.status_code == 500
+        with patch('app.api.rec', exception_mock):
+            response = client.get("/recommend/item1")
+            assert response.status_code == 500
     
     def test_name_service_exception(self, client, mock_recommender):
         """Test handling of name service exceptions"""
-        mock_recommender.name_of.side_effect = Exception("Name service error")
+        # Create a mock that raises an exception
+        exception_mock = type('MockRecommender', (), {
+            'names': {"item1": "Product 1"},
+            'get': lambda self, item_id, k=10: {"left": [], "right": [], "query_seen": "unseen"},
+            'name_of': lambda self, item_id: (_ for _ in ()).throw(Exception("Name service error"))
+        })()
         
-        response = client.get("/name/item1")
-        assert response.status_code == 500
+        with patch('app.api.rec', exception_mock):
+            response = client.get("/name/item1")
+            assert response.status_code == 500
 
 if __name__ == "__main__":
     pytest.main([__file__])
