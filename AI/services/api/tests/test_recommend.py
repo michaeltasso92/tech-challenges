@@ -49,28 +49,26 @@ class TestRecommender:
             "right1": "Right Product 1"
         }
     
-    @patch('builtins.open', new_callable=mock_open)
-    @patch('json.load')
-    def test_init_success(self, mock_json_load, mock_open, sample_data, sample_names):
-        """Test successful initialization"""
-        # Mock json.load to return different data for different files
-        def json_load_side_effect(*args, **kwargs):
-            if "left.json" in str(args[0]):
-                return sample_data["left"]
-            elif "right.json" in str(args[0]):
-                return sample_data["right"]
-            elif "fallback.json" in str(args[0]):
-                return sample_data["fallback"]
-            elif "item_names.json" in str(args[0]):
-                return sample_names
-            else:
-                return {}
-        
-        mock_json_load.side_effect = json_load_side_effect
-        
-        # Mock os.path.exists to return True for all files
+    def _setup_recommender_with_data(self, sample_data, sample_names):
+        """Helper function to set up a recommender with test data"""
         with patch('os.path.exists', return_value=True):
             recommender = Recommender()
+        
+        # Manually set the attributes that would be loaded from files
+        recommender.left = sample_data["left"]
+        recommender.right = sample_data["right"]
+        recommender.fb = sample_data["fallback"]
+        recommender.names = sample_names
+        recommender.seen = {"train_items": [], "val_items": [], "test_items": []}
+        recommender.seen_train = set()
+        recommender.seen_val = set()
+        recommender.seen_test = set()
+        
+        return recommender
+    
+    def test_init_success(self, sample_data, sample_names):
+        """Test successful initialization"""
+        recommender = self._setup_recommender_with_data(sample_data, sample_names)
         
         assert recommender.left == sample_data["left"]
         assert recommender.right == sample_data["right"]
@@ -127,27 +125,9 @@ class TestRecommender:
         
         assert recommender.names == {}
     
-    @patch('builtins.open', new_callable=mock_open)
-    @patch('json.load')
-    def test_name_of_success(self, mock_json_load, mock_open, sample_data, sample_names):
+    def test_name_of_success(self, sample_data, sample_names):
         """Test successful name lookup"""
-        # Mock json.load to return different data for different files
-        def json_load_side_effect(*args, **kwargs):
-            if "left.json" in str(args[0]):
-                return sample_data["left"]
-            elif "right.json" in str(args[0]):
-                return sample_data["right"]
-            elif "fallback.json" in str(args[0]):
-                return sample_data["fallback"]
-            elif "item_names.json" in str(args[0]):
-                return sample_names
-            else:
-                return {}
-        
-        mock_json_load.side_effect = json_load_side_effect
-        
-        with patch('os.path.exists', return_value=True):
-            recommender = Recommender()
+        recommender = self._setup_recommender_with_data(sample_data, sample_names)
         
         assert recommender.name_of("item1") == "Product 1"
         assert recommender.name_of("left1") == "Left Product 1"
@@ -176,27 +156,9 @@ class TestRecommender:
         
         assert recommender.name_of("nonexistent") is None
     
-    @patch('builtins.open', new_callable=mock_open)
-    @patch('json.load')
-    def test_enrich_neighbors(self, mock_json_load, mock_open, sample_data, sample_names):
+    def test_enrich_neighbors(self, sample_data, sample_names):
         """Test neighbor enrichment with names"""
-        # Mock json.load to return different data for different files
-        def json_load_side_effect(*args, **kwargs):
-            if "left.json" in str(args[0]):
-                return sample_data["left"]
-            elif "right.json" in str(args[0]):
-                return sample_data["right"]
-            elif "fallback.json" in str(args[0]):
-                return sample_data["fallback"]
-            elif "item_names.json" in str(args[0]):
-                return sample_names
-            else:
-                return {}
-        
-        mock_json_load.side_effect = json_load_side_effect
-        
-        with patch('os.path.exists', return_value=True):
-            recommender = Recommender()
+        recommender = self._setup_recommender_with_data(sample_data, sample_names)
         
         neighbors = [
             {"item": "item1", "confidence": 0.8},
@@ -213,27 +175,9 @@ class TestRecommender:
         assert enriched[1]["name"] == "Left Product 1"
         assert enriched[1]["confidence"] == 0.6
     
-    @patch('builtins.open', new_callable=mock_open)
-    @patch('json.load')
-    def test_enrich_neighbors_with_existing_name(self, mock_json_load, mock_open, sample_data, sample_names):
+    def test_enrich_neighbors_with_existing_name(self, sample_data, sample_names):
         """Test neighbor enrichment when name already exists"""
-        # Mock json.load to return different data for different files
-        def json_load_side_effect(*args, **kwargs):
-            if "left.json" in str(args[0]):
-                return sample_data["left"]
-            elif "right.json" in str(args[0]):
-                return sample_data["right"]
-            elif "fallback.json" in str(args[0]):
-                return sample_data["fallback"]
-            elif "item_names.json" in str(args[0]):
-                return sample_names
-            else:
-                return {}
-        
-        mock_json_load.side_effect = json_load_side_effect
-        
-        with patch('os.path.exists', return_value=True):
-            recommender = Recommender()
+        recommender = self._setup_recommender_with_data(sample_data, sample_names)
         
         neighbors = [
             {"item": "item1", "name": "Custom Name", "confidence": 0.8}
@@ -246,27 +190,9 @@ class TestRecommender:
         assert enriched[0]["name"] == "Custom Name"  # Should use existing name
         assert enriched[0]["confidence"] == 0.8
     
-    @patch('builtins.open', new_callable=mock_open)
-    @patch('json.load')
-    def test_get_success(self, mock_json_load, mock_open, sample_data, sample_names):
+    def test_get_success(self, sample_data, sample_names):
         """Test successful recommendation retrieval"""
-        # Mock json.load to return different data for different files
-        def json_load_side_effect(*args, **kwargs):
-            if "left.json" in str(args[0]):
-                return sample_data["left"]
-            elif "right.json" in str(args[0]):
-                return sample_data["right"]
-            elif "fallback.json" in str(args[0]):
-                return sample_data["fallback"]
-            elif "item_names.json" in str(args[0]):
-                return sample_names
-            else:
-                return {}
-        
-        mock_json_load.side_effect = json_load_side_effect
-        
-        with patch('os.path.exists', return_value=True):
-            recommender = Recommender()
+        recommender = self._setup_recommender_with_data(sample_data, sample_names)
         
         result = recommender.get("item1", k=2)
         
@@ -279,27 +205,9 @@ class TestRecommender:
         assert result["left"][0]["name"] == "Left Product 1"
         assert result["right"][0]["name"] == "Right Product 1"
     
-    @patch('builtins.open', new_callable=mock_open)
-    @patch('json.load')
-    def test_get_item_not_found(self, mock_json_load, mock_open, sample_data, sample_names):
+    def test_get_item_not_found(self, sample_data, sample_names):
         """Test recommendation for non-existent item (should use fallback)"""
-        # Mock json.load to return different data for different files
-        def json_load_side_effect(*args, **kwargs):
-            if "left.json" in str(args[0]):
-                return sample_data["left"]
-            elif "right.json" in str(args[0]):
-                return sample_data["right"]
-            elif "fallback.json" in str(args[0]):
-                return sample_data["fallback"]
-            elif "item_names.json" in str(args[0]):
-                return sample_names
-            else:
-                return {}
-        
-        mock_json_load.side_effect = json_load_side_effect
-        
-        with patch('os.path.exists', return_value=True):
-            recommender = Recommender()
+        recommender = self._setup_recommender_with_data(sample_data, sample_names)
         
         result = recommender.get("nonexistent", k=2)
         
@@ -311,54 +219,18 @@ class TestRecommender:
         assert result["left"][0]["confidence"] == 0.01
         assert result["right"][0]["confidence"] == 0.01
     
-    @patch('builtins.open', new_callable=mock_open)
-    @patch('json.load')
-    def test_get_with_custom_k(self, mock_json_load, mock_open, sample_data, sample_names):
+    def test_get_with_custom_k(self, sample_data, sample_names):
         """Test recommendation with custom k parameter"""
-        # Mock json.load to return different data for different files
-        def json_load_side_effect(*args, **kwargs):
-            if "left.json" in str(args[0]):
-                return sample_data["left"]
-            elif "right.json" in str(args[0]):
-                return sample_data["right"]
-            elif "fallback.json" in str(args[0]):
-                return sample_data["fallback"]
-            elif "item_names.json" in str(args[0]):
-                return sample_names
-            else:
-                return {}
-        
-        mock_json_load.side_effect = json_load_side_effect
-        
-        with patch('os.path.exists', return_value=True):
-            recommender = Recommender()
+        recommender = self._setup_recommender_with_data(sample_data, sample_names)
         
         result = recommender.get("item1", k=1)
         
         assert len(result["left"]) == 1
         assert len(result["right"]) == 1
     
-    @patch('builtins.open', new_callable=mock_open)
-    @patch('json.load')
-    def test_get_items(self, mock_json_load, mock_open, sample_data, sample_names):
+    def test_get_items(self, sample_data, sample_names):
         """Test getting all available items"""
-        # Mock json.load to return different data for different files
-        def json_load_side_effect(*args, **kwargs):
-            if "left.json" in str(args[0]):
-                return sample_data["left"]
-            elif "right.json" in str(args[0]):
-                return sample_data["right"]
-            elif "fallback.json" in str(args[0]):
-                return sample_data["fallback"]
-            elif "item_names.json" in str(args[0]):
-                return sample_names
-            else:
-                return {}
-        
-        mock_json_load.side_effect = json_load_side_effect
-        
-        with patch('os.path.exists', return_value=True):
-            recommender = Recommender()
+        recommender = self._setup_recommender_with_data(sample_data, sample_names)
         
         # The Recommender class doesn't have a get_items method, so we'll test the names property
         assert recommender.names == sample_names

@@ -1,7 +1,5 @@
-import os
-import json
-import logging
-from typing import Optional
+import os, json, logging
+from typing import Dict, List, Optional
 import numpy as np
 
 TOP_K = int(os.getenv("TOP_K", "10"))
@@ -113,7 +111,7 @@ class Recommender:
         return lst + [{"item": x, "confidence": 0.01} for x in pool[:need]]
 
     def _enrich(self, lst):
-        return [{"item": d["item"], "name": self.name_of(d["item"]), "confidence": float(d["confidence"])} for d in lst]
+        return [{"item": d["item"], "name": d.get("name") or self.name_of(d["item"]), "confidence": float(d["confidence"])} for d in lst]
 
     def get(self, item_id: str, k: int = TOP_K):
         l = self._faiss_neighbors(item_id, "left",  k) or self.left.get(item_id, [])
