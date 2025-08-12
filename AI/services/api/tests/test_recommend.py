@@ -127,13 +127,24 @@ class TestRecommender:
         
         assert recommender.names == {}
     
-    @patch('app.recommend.load_artifacts')
     @patch('builtins.open', new_callable=mock_open)
     @patch('json.load')
-    def test_name_of_success(self, mock_json_load, mock_open, mock_load_artifacts, sample_data, sample_names):
+    def test_name_of_success(self, mock_json_load, mock_open, sample_data, sample_names):
         """Test successful name lookup"""
-        mock_load_artifacts.return_value = (sample_data["left"], sample_data["right"], sample_data["fallback"])
-        mock_json_load.return_value = sample_names
+        # Mock json.load to return different data for different files
+        def json_load_side_effect(*args, **kwargs):
+            if "left.json" in str(args[0]):
+                return sample_data["left"]
+            elif "right.json" in str(args[0]):
+                return sample_data["right"]
+            elif "fallback.json" in str(args[0]):
+                return sample_data["fallback"]
+            elif "item_names.json" in str(args[0]):
+                return sample_names
+            else:
+                return {}
+        
+        mock_json_load.side_effect = json_load_side_effect
         
         with patch('os.path.exists', return_value=True):
             recommender = Recommender()
