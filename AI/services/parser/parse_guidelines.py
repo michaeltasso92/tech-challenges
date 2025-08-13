@@ -44,6 +44,10 @@ def is_item_node(x: dict) -> bool:
 
 def is_valid_product_for_recommendation(x: dict) -> bool:
     """Check if a node is a valid product that should be included in recommendations."""
+    # Accessories, display objects and infrastructure are not valid for recommendation
+    t = x.get("type")
+    if t == ACCESSORY_TYPE or t in DISPLAY_TYPES or t in INFRASTRUCTURE_TYPES:
+        return False
     if not is_item_node(x):
         return False
     
@@ -136,8 +140,8 @@ def parse_file(path):
                     names[iid] = child.get("name") or child.get("name2") or ""
                 add_meta(metas, child)
             else:
-                # Still record metadata and names for non-slot items like accessories
-                if is_item_node(child):
+                # Record metadata/names only for accessories (but not other invalid items)
+                if child.get("type") == ACCESSORY_TYPE:
                     iid = child.get("id")
                     if iid and iid not in names:
                         names[iid] = child.get("name") or child.get("name2") or ""
