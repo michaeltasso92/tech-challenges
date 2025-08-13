@@ -244,11 +244,18 @@ if __name__ == "__main__":
     if len(df):
         df.to_parquet(outp)
 
-    # names parquet (index=item_id)
+    # names parquet (index=item_id) and JSON export
     if all_names:
-        pd.Series(all_names, name="name").to_frame().to_parquet(
-            os.path.join(args.out, "item_names.parquet")
-        )
+        names_df = pd.Series(all_names, name="name").to_frame()
+        names_df.to_parquet(os.path.join(args.out, "item_names.parquet"))
+        # Also write JSON names for API consumption (no trainer dependency)
+        try:
+            os.makedirs("/app/models/artifacts", exist_ok=True)
+            names_json_path = os.path.join("/app/models/artifacts", "item_names.json")
+            with open(names_json_path, "w") as f:
+                json.dump(all_names, f)
+        except Exception:
+            pass
 
     # meta parquet (index=item_id)
     if all_meta:
@@ -269,7 +276,15 @@ if __name__ == "__main__":
                 "image_urls": m.get("image_urls", []),
             })
         meta_df = pd.DataFrame.from_records(recs).set_index("item_id")
-        meta_df.to_parquet(os.path.join(args.out, "item_meta.parquet"))
+        out_meta_path = os.path.join(args.out, "item_meta.parquet")
+        meta_df.to_parquet(out_meta_path)
+        # Also copy meta parquet to models artifacts for API image support
+        try:
+            os.makedirs("/app/models/artifacts", exist_ok=True)
+            meta_out_art = os.path.join("/app/models/artifacts", "item_meta.parquet")
+            meta_df.to_parquet(meta_out_art)
+        except Exception:
+            pass
 
     # Final summary
     print(f"files={len(files)} empty={empty} rows={len(df)}")

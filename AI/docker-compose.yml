@@ -7,19 +7,12 @@ services:
       - ./models:/app/models
     command: ["python","parse_guidelines.py","--raw","/app/data/raw","--out","/app/data/interim"]
 
-  trainer:
-    build: ./services/trainer
-    env_file: .env
-    depends_on: [parser]
-    volumes:
-      - ./data:/app/data
-      - ./models:/app/models
-    command: ["python","train_model.py","--in","/app/data/interim","--out","/app/models/artifacts"]
+  # trainer service removed: rule-based trainer no longer required
 
   api:
     build: ./services/api
     env_file: .env
-    depends_on: [trainer]
+    depends_on: [parser]
     ports: ["8000:8000"]
     volumes:
       - ./models:/app/models:ro
