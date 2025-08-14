@@ -48,6 +48,13 @@ jobs:
           pip install pytest
           pytest -q -m "not slow"
 
+      - name: UI tests (optional)
+        working-directory: AI/services/ui
+        run: |
+          pip install -r requirements.txt || true
+          pip install pytest || true
+          pytest -q -m "not slow" || true
+
       - name: Generate parsed.parquet from raw (if present)
         if: ${{ hashFiles('AI/data/raw/**/*.json') != '' && hashFiles('AI/data/interim/parsed.parquet') == '' }}
         working-directory: AI/services/parser
@@ -105,13 +112,6 @@ jobs:
           if [ "${{ steps.metrics.outcome }}" = "success" ]; then echo "ok=true" >> $GITHUB_OUTPUT; else echo "ok=false" >> $GITHUB_OUTPUT; fi
     outputs:
       metrics_ok: ${{ steps.gate.outputs.ok }}
-
-      - name: UI tests (optional)
-        working-directory: AI/services/ui
-        run: |
-          pip install -r requirements.txt || true
-          pip install pytest || true
-          pytest -q -m "not slow" || true
 
   docker-build:
     runs-on: ubuntu-latest
