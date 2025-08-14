@@ -153,7 +153,7 @@ class BiEncoderTrainer:
             except Exception as e:
                 logging.warning(f"MLflow logging failed: {e}. Continuing without MLflow.")
                 # Fallback: train without MLflow
-                 model.fit(train_objectives=[(loader, loss)], epochs=self.epochs, warmup_steps=warmup, show_progress_bar=True, use_amp=False)
+                model.fit(train_objectives=[(loader, loss)], epochs=self.epochs, warmup_steps=warmup, show_progress_bar=True, use_amp=False)
                 logging.info(f"Training completed for {model_type} model (without MLflow)")
         else:
             # Train without MLflow

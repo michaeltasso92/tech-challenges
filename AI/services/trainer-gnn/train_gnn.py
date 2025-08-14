@@ -12,11 +12,19 @@ import faiss
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 
 class GNNGraphBuilder:
-    def __init__(self, interim_dir: str, artifacts_dir: str, seed: int = 42, experiment_name: str = "gnn-graph-building"):
+    def __init__(self, interim_dir: str, artifacts_dir: str, seed: int = 42, experiment_name: str = "gnn-graph-building",
+                 hidden_dim: int = 512, out_dim: int = 256, epochs: int = 15, lr: float = 1e-3, neg_ratio: int = 5,
+                 use_edge_weights: bool = True):
         self.interim = interim_dir
         self.artifacts = artifacts_dir
         self.seed = seed
         self.experiment_name = experiment_name
+        self.hidden_dim = hidden_dim
+        self.out_dim = out_dim
+        self.epochs = epochs
+        self.lr = lr
+        self.neg_ratio = max(1, int(neg_ratio))
+        self.use_edge_weights = use_edge_weights
         os.makedirs(self.artifacts, exist_ok=True)
         self.item2idx: Dict[str,int] = {}
         self.idx2item: Dict[int,str] = {}
@@ -256,16 +264,15 @@ class GNNGraphBuilder:
         logging.info("Saved: gnn_X.npy, gnn_left/right_{src,dst}.npy")
 
     def train_gnn(self, g: dgl.DGLHeteroGraph, X: np.ndarray, l_src, l_dst, r_src, r_dst,
-                  hidden_dim: int = 256, out_dim: int = 256, epochs: int = 5, lr: float = 1e-3,
-                  neg_ratio: int = 1) -> np.ndarray:
+                  l_w=None, r_w=None) -> np.ndarray:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         g = g.to(device)
         feat = torch.from_numpy(X).to(device)
         # Assign node feature
         g.nodes['item'].data['feat'] = feat
 
-        model = self._HeteroSAGE(in_dim=feat.shape[1], hidden_dim=hidden_dim, out_dim=out_dim).to(device)
-        opt = torch.optim.Adam(model.parameters(), lr=lr)
+        model = self._HeteroSAGE(in_dim=feat.shape[1], hidden_dim=self.hidden_dim, out_dim=self.out_dim).to(device)
+        opt = torch.optim.Adam(model.parameters(), lr=self.lr, weight_decay=1e-4)
         bce = nn.BCEWithLogitsLoss()
 
         # Pre-build positive edges tensors
@@ -273,25 +280,40 @@ class GNNGraphBuilder:
         l_dst_t = torch.as_tensor(l_dst, device=device)
         r_src_t = torch.as_tensor(r_src, device=device)
         r_dst_t = torch.as_tensor(r_dst, device=device)
+        l_w_t = torch.as_tensor(l_w, device=device, dtype=torch.float32) if l_w is not None else None
+        r_w_t = torch.as_tensor(r_w, device=device, dtype=torch.float32) if r_w is not None else None
 
-        for epoch in range(1, epochs+1):
+        for epoch in range(1, self.epochs+1):
             model.train()
             opt.zero_grad()
             h = model(g, {'item': g.nodes['item'].data['feat']})
             # LEFT relation loss
             l_pos_score = self._dot_score(h, l_src_t, l_dst_t)
-            l_neg_dst = self._neg_sample(self.num_nodes, len(l_src_t) * max(1, neg_ratio), device)
-            l_neg_src = l_src_t.repeat_interleave(max(1, neg_ratio))
+            l_neg_dst = self._neg_sample(self.num_nodes, len(l_src_t) * self.neg_ratio, device)
+            l_neg_src = l_src_t.repeat_interleave(self.neg_ratio)
             l_neg_score = self._dot_score(h, l_neg_src, l_neg_dst)
-            left_loss = bce(torch.cat([l_pos_score, l_neg_score], dim=0),
-                            torch.cat([torch.ones_like(l_pos_score), torch.zeros_like(l_neg_score)], dim=0))
+            l_logits = torch.cat([l_pos_score, l_neg_score], dim=0)
+            l_labels = torch.cat([torch.ones_like(l_pos_score), torch.zeros_like(l_neg_score)], dim=0)
+            if self.use_edge_weights and l_w_t is not None and len(l_w_t) == len(l_pos_score):
+                # normalize weights to mean ~1
+                lw = l_w_t / (l_w_t.mean() + 1e-6)
+                l_weight = torch.cat([lw, torch.ones_like(l_neg_score)], dim=0)
+                left_loss = nn.functional.binary_cross_entropy_with_logits(l_logits, l_labels, weight=l_weight)
+            else:
+                left_loss = bce(l_logits, l_labels)
             # RIGHT relation loss
             r_pos_score = self._dot_score(h, r_src_t, r_dst_t)
-            r_neg_dst = self._neg_sample(self.num_nodes, len(r_src_t) * max(1, neg_ratio), device)
-            r_neg_src = r_src_t.repeat_interleave(max(1, neg_ratio))
+            r_neg_dst = self._neg_sample(self.num_nodes, len(r_src_t) * self.neg_ratio, device)
+            r_neg_src = r_src_t.repeat_interleave(self.neg_ratio)
             r_neg_score = self._dot_score(h, r_neg_src, r_neg_dst)
-            right_loss = bce(torch.cat([r_pos_score, r_neg_score], dim=0),
-                             torch.cat([torch.ones_like(r_pos_score), torch.zeros_like(r_neg_score)], dim=0))
+            r_logits = torch.cat([r_pos_score, r_neg_score], dim=0)
+            r_labels = torch.cat([torch.ones_like(r_pos_score), torch.zeros_like(r_neg_score)], dim=0)
+            if self.use_edge_weights and r_w_t is not None and len(r_w_t) == len(r_pos_score):
+                rw = r_w_t / (r_w_t.mean() + 1e-6)
+                r_weight = torch.cat([rw, torch.ones_like(r_neg_score)], dim=0)
+                right_loss = nn.functional.binary_cross_entropy_with_logits(r_logits, r_labels, weight=r_weight)
+            else:
+                right_loss = bce(r_logits, r_labels)
 
             loss = left_loss + right_loss
             loss.backward()
@@ -335,8 +357,7 @@ class GNNGraphBuilder:
             g = self.build_heterograph(l_src, l_dst, r_src, r_dst, l_w, r_w)  # topology + weights
             self.save_pretrain_dump(X, l_src, l_dst, r_src, r_dst)
             # Train GNN to refine embeddings via link prediction
-            h = self.train_gnn(g, X, l_src, l_dst, r_src, r_dst,
-                               hidden_dim=256, out_dim=256, epochs=5, lr=1e-3, neg_ratio=1)
+            h = self.train_gnn(g, X, l_src, l_dst, r_src, r_dst, l_w=l_w, r_w=r_w)
             
             # Log metrics
             mlflow.log_metrics({
@@ -370,5 +391,21 @@ if __name__ == "__main__":
     ap.add_argument("--artifacts", required=True)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--experiment-name", default="gnn-graph-building", help="MLflow experiment name")
+    ap.add_argument("--epochs", type=int, default=15)
+    ap.add_argument("--hidden", type=int, default=512)
+    ap.add_argument("--neg-ratio", type=int, default=5)
+    ap.add_argument("--lr", type=float, default=1e-3)
+    ap.add_argument("--no-edge-weights", action="store_true")
     args = ap.parse_args()
-    GNNGraphBuilder(args.interim, args.artifacts, args.seed, args.experiment_name).run()
+    GNNGraphBuilder(
+        args.interim,
+        args.artifacts,
+        seed=args.seed,
+        experiment_name=args.experiment_name,
+        hidden_dim=args.hidden,
+        out_dim=256,
+        epochs=args.epochs,
+        lr=args.lr,
+        neg_ratio=args.neg_ratio,
+        use_edge_weights=not args.no_edge_weights
+    ).run()

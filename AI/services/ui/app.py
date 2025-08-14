@@ -3,6 +3,7 @@ import unicodedata
 import requests
 import pandas as pd
 import streamlit as st
+from streamlit.components.v1 import html as st_html
 
 API_BASE = os.getenv("API_BASE_URL","http://localhost:8000")
 TOP_K = 10
@@ -87,6 +88,32 @@ def get_image_urls(item_id:str):
     except Exception:
         pass
     return []
+
+def _neighbor_card_html(name: str, item_id: str, score: float, seen: str, image_url: str = "") -> str:
+    img = f'<img src="{image_url}" alt="{name}" style="max-width: 80px; max-height: 80px; border-radius: 8px; margin-bottom: 10px; background: white; padding: 5px;"/>' if image_url else ""
+    # Single-line HTML to avoid Markdown interpreting indented lines as code blocks
+    return (
+        f'<div style="background: white; border-radius: 12px; padding: 15px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #3b82f6; text-align: center;">'
+        f'{img}'
+        f'<div style="font-weight: 600; color: #1e293b; margin-bottom: 5px; font-size: 14px;">{name}</div>'
+        f'<div style="font-size: 11px; color: #64748b; margin-bottom: 8px; font-family: monospace;">{item_id}</div>'
+        f'<div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px;">'
+        f'<span style="background: #f1f5f9; padding: 2px 8px; border-radius: 12px; color: #475569; font-weight: 500;">Score: {float(score):.3f}</span>'
+        f'{seen_badge(str(seen))}'
+        f'</div></div>'
+    )
+
+def _selected_card_html(name: str, item_id: str, image_url: str | None, seen: str) -> str:
+    img = f'<img src="{image_url}" alt="{name}" style="max-width: 150px; max-height: 150px; border-radius: 10px; margin-bottom: 15px; background: white; padding: 10px;"/>' if image_url else ""
+    return (
+        f'<div style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); border-radius: 20px; padding: 25px; text-align: center; color: white; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); margin: 20px 0;">'
+        f'{img}'
+        f'<h3 style="margin: 0 0 10px 0; font-size: 20px;">{name}</h3>'
+        f'<div style="margin-bottom: 15px;">{seen_badge(seen)}</div>'
+        f'<div style="font-size: 12px; opacity: 0.9; font-family: monospace;">{item_id}</div>'
+        f'<div style="margin-top: 15px; font-size: 14px; opacity: 0.8;">Selected Product</div>'
+        f'</div>'
+    )
 
 # Check for missing product names
 names = fetch_names()
@@ -207,86 +234,19 @@ if run and selected_id:
         else:
             for _, row in left_df.iterrows():
                 with st.container():
-                    # Get image URL for this item
-                    item_images = row['image_urls']
-                    image_html = ""
-                    if item_images:
-                        image_url = item_images[0]  # Use first image
-                        image_html = f'<img src="{image_url}" alt="{row["neighbor"]}" style="max-width: 80px; max-height: 80px; border-radius: 8px; margin-bottom: 10px; background: white; padding: 5px;"/>'
-                    
-                    st.markdown(f"""
-                    <div style="
-                        background: white;
-                        border-radius: 12px;
-                        padding: 15px;
-                        margin-bottom: 12px;
-                        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-                        border-left: 4px solid #3b82f6;
-                        text-align: center;
-                    ">
-                        {image_html}
-                        <div style="font-weight: 600; color: #1e293b; margin-bottom: 5px; font-size: 14px;">
-                            {row['neighbor']}
-                        </div>
-                        <div style="font-size: 11px; color: #64748b; margin-bottom: 8px; font-family: monospace;">
-                            {row['item']}
-                        </div>
-                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
-                            <span style="background: #f1f5f9; padding: 2px 8px; border-radius: 12px; color: #475569; font-weight: 500;">
-                                Score: {float(row['confidence']):.3f}
-                            </span>
-                            {seen_badge(str(row['seen']))}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    img_url = row['image_urls'][0] if row['image_urls'] else ""
+                    html = _neighbor_card_html(row['neighbor'], row['item'], float(row['confidence']), str(row['seen']), img_url)
+                    st_html(html, height=170)
     
     with center_col:
         # Display product image if available
         if selected_images:
             # Use the first image (usually the main product image)
             main_image_url = selected_images[0]
-            st.markdown(f"""
-            <div style="
-                background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-                border-radius: 20px;
-                padding: 25px;
-                text-align: center;
-                color: white;
-                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-                margin: 20px 0;
-            ">
-                <img src="{main_image_url}" alt="{qname}" style="
-                    max-width: 150px;
-                    max-height: 150px;
-                    border-radius: 10px;
-                    margin-bottom: 15px;
-                    background: white;
-                    padding: 10px;
-                "/>
-                <h3 style="margin: 0 0 10px 0; font-size: 20px;">{qname}</h3>
-                <div style="margin-bottom: 15px;">{seen_badge(qseen)}</div>
-                <div style="font-size: 12px; opacity: 0.9; font-family: monospace;">{selected_id}</div>
-                <div style="margin-top: 15px; font-size: 14px; opacity: 0.8;">Selected Product</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st_html(_selected_card_html(qname, selected_id, main_image_url, qseen), height=300)
         else:
             # Fallback without image
-            st.markdown(f"""
-            <div style="
-                background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%);
-                border-radius: 20px;
-                padding: 25px;
-                text-align: center;
-                color: white;
-                box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-                margin: 20px 0;
-            ">
-                <h3 style="margin: 0 0 10px 0; font-size: 20px;">{qname}</h3>
-                <div style="margin-bottom: 15px;">{seen_badge(qseen)}</div>
-                <div style="font-size: 12px; opacity: 0.9; font-family: monospace;">{selected_id}</div>
-                <div style="margin-top: 15px; font-size: 14px; opacity: 0.8;">Selected Product</div>
-            </div>
-            """, unsafe_allow_html=True)
+            st_html(_selected_card_html(qname, selected_id, None, qseen), height=220)
     
     with right_col:
         st.markdown("#### Right Shelf ➡️")
@@ -295,38 +255,9 @@ if run and selected_id:
         else:
             for _, row in right_df.iterrows():
                 with st.container():
-                    # Get image URL for this item
-                    item_images = row['image_urls']
-                    image_html = ""
-                    if item_images:
-                        image_url = item_images[0]  # Use first image
-                        image_html = f'<img src="{image_url}" alt="{row["neighbor"]}" style="max-width: 80px; max-height: 80px; border-radius: 8px; margin-bottom: 10px; background: white; padding: 5px;"/>'
-                    
-                    st.markdown(f"""
-                    <div style="
-                        background: white;
-                        border-radius: 12px;
-                        padding: 15px;
-                        margin-bottom: 12px;
-                        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-                        border-left: 4px solid #3b82f6;
-                        text-align: center;
-                    ">
-                        {image_html}
-                        <div style="font-weight: 600; color: #1e293b; margin-bottom: 5px; font-size: 14px;">
-                            {row['neighbor']}
-                        </div>
-                        <div style="font-size: 11px; color: #64748b; margin-bottom: 8px; font-family: monospace;">
-                            {row['item']}
-                        </div>
-                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px;">
-                            <span style="background: #f1f5f9; padding: 2px 8px; border-radius: 12px; color: #475569; font-weight: 500;">
-                                Score: {float(row['confidence']):.3f}
-                            </span>
-                            {seen_badge(str(row['seen']))}
-                        </div>
-                    </div>
-                    """, unsafe_allow_html=True)
+                    img_url = row['image_urls'][0] if row['image_urls'] else ""
+                    html = _neighbor_card_html(row['neighbor'], row['item'], float(row['confidence']), str(row['seen']), img_url)
+                    st_html(html, height=170)
 
     # Additional info below the shelf
     st.markdown("---")
