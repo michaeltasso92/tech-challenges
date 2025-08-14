@@ -59,10 +59,11 @@ def main():
     
     # Define services
     services = [
+        "services/parser",
+        "services/featurizer",
         "services/api",
-        "services/parser", 
-        "services/trainer",
         "services/trainer-bienc",
+        "services/trainer-gnn",
         "services/ui"
     ]
     
