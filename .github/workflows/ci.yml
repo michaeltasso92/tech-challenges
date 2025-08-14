@@ -82,7 +82,14 @@ jobs:
         run: |
           python -m pip install -q mlflow
           rm -rf AI/models/artifacts || true
-          mlflow models download -m "$MLFLOW_MODEL_REF" -d AI/models/artifacts
+          python - <<'PY'
+          import os, mlflow
+          dst = 'AI/models/artifacts'
+          os.makedirs(dst, exist_ok=True)
+          ref = os.environ.get('MLFLOW_MODEL_REF', 'models:/bi-encoder@Staging')
+          mlflow.artifacts.download_artifacts(artifact_uri=ref, dst_path=dst)
+          print('Downloaded model artifacts from', ref, 'to', dst)
+          PY
 
       - name: Evaluate bi-encoder (optional)
         id: eval
