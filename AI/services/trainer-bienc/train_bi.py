@@ -3,7 +3,6 @@ import json
 import logging
 import argparse
 import time
-os.environ["CUDA_VISIBLE_DEVICES"] = ""               # hard-disable CUDA
 os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 import numpy as np
@@ -31,6 +30,9 @@ class BiEncoderTrainer:
         self.dim = dim
         self.seed = seed
         self.experiment_name = experiment_name
+        # Select device: allow CPU override via FORCE_CPU=1, otherwise use CUDA when available
+        force_cpu = os.getenv("FORCE_CPU", "0") == "1"
+        self.device = "cuda" if (torch.cuda.is_available() and not force_cpu) else "cpu"
         self.text_map: Dict[str,str] = {}
         self.item2idx: Dict[str,int] = {}
         self.items: List[str] = []
@@ -115,13 +117,13 @@ class BiEncoderTrainer:
         return ex
 
     def train_model(self, examples: List[InputExample], model_type: str = "left") -> SentenceTransformer:
-        model = SentenceTransformer(self.base_model, device="cpu")
+        model = SentenceTransformer(self.base_model, device=self.device)
         model.max_seq_length = 64
         #examples = examples[:2000]
         loader = DataLoader(examples, batch_size=self.batch_size, shuffle=True, drop_last=True, num_workers=0)
         loss = losses.MultipleNegativesRankingLoss(model)
         warmup = int(0.06 * self.epochs * len(loader))
-        logging.info(f"Training {self.base_model} (CPU) epochs={self.epochs} batch={self.batch_size} warmup={warmup}")
+        logging.info(f"Training {self.base_model} on {self.device} epochs={self.epochs} batch={self.batch_size} warmup={warmup}")
 
         # Train model with optional MLflow logging
         if self.mlflow_enabled:
@@ -151,7 +153,7 @@ class BiEncoderTrainer:
             except Exception as e:
                 logging.warning(f"MLflow logging failed: {e}. Continuing without MLflow.")
                 # Fallback: train without MLflow
-                model.fit(train_objectives=[(loader, loss)], epochs=self.epochs, warmup_steps=warmup, show_progress_bar=True, use_amp=False)
+                 model.fit(train_objectives=[(loader, loss)], epochs=self.epochs, warmup_steps=warmup, show_progress_bar=True, use_amp=False)
                 logging.info(f"Training completed for {model_type} model (without MLflow)")
         else:
             # Train without MLflow
@@ -162,7 +164,7 @@ class BiEncoderTrainer:
 
     def encode_all(self, model: SentenceTransformer) -> np.ndarray:
         texts = [self.text_map[it] for it in self.items]
-        emb = model.encode(texts, batch_size=256, normalize_embeddings=True, show_progress_bar=True, device="cpu")
+        emb = model.encode(texts, batch_size=256, normalize_embeddings=True, show_progress_bar=True, device=self.device)
         return emb.astype(np.float32)
 
     def save_artifacts(self, emb_left: np.ndarray, emb_right: np.ndarray):
@@ -229,14 +231,14 @@ class BiEncoderTrainer:
 
         self.items = sorted(self.text_map.keys()); self.item2idx = {it:i for i,it in enumerate(self.items)}
 
-        logging.info("Training LEFT bi-encoder (CPU)…")
+        logging.info(f"Training LEFT bi-encoder ({self.device})…")
         model_left  = self.train_model(left_ex, "left")
-        logging.info("Training RIGHT bi-encoder (CPU)…")
+        logging.info(f"Training RIGHT bi-encoder ({self.device})…")
         model_right = self.train_model(right_ex, "right")
 
-        logging.info("Encoding corpus with LEFT encoder (CPU)…")
+        logging.info(f"Encoding corpus with LEFT encoder ({self.device})…")
         emb_left  = self.encode_all(model_left)
-        logging.info("Encoding corpus with RIGHT encoder (CPU)…")
+        logging.info(f"Encoding corpus with RIGHT encoder ({self.device})…")
         emb_right = self.encode_all(model_right)
 
         self.save_artifacts(emb_left, emb_right)

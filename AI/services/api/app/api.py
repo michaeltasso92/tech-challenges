@@ -78,6 +78,12 @@ def debug_model():
         "num_vocab_items": len(getattr(rec, "vocab", {})) if getattr(rec, "faiss_ok", False) else 0,
         "has_left_index": os.path.exists(os.path.join(MODEL_DIR, "left.index")),
         "has_right_index": os.path.exists(os.path.join(MODEL_DIR, "right.index")),
+        "gnn": {
+            "use_gnn": getattr(rec, "use_gnn", False),
+            "gnn_ok": getattr(rec, "gnn_ok", False),
+            "has_gnn_index": os.path.exists(os.path.join(MODEL_DIR, "gnn.index")),
+            "has_gnn_embed": os.path.exists(os.path.join(MODEL_DIR, "gnn_embed.npy")),
+        },
         "fallback_counts": {
             "left_json": len(getattr(rec, "left", {})),
             "right_json": len(getattr(rec, "right", {})),

@@ -4,6 +4,7 @@ import numpy as np
 
 TOP_K = int(os.getenv("TOP_K", "10"))
 MODEL_DIR = os.getenv("MODEL_DIR", "/app/models/artifacts")
+USE_GNN = os.getenv("USE_GNN", "0") == "1"
 
 class Recommender:
     def __init__(self):
@@ -19,11 +20,16 @@ class Recommender:
         self.fb    = _load_json(os.path.join(MODEL_DIR, "fallback.json"), {"left": [], "right": []})
         self.names = _load_json(os.path.join(MODEL_DIR, "item_names.json"), {})
 
-        # FAISS + embeddings
+        # FAISS + embeddings (bi-encoder)
         self.faiss_ok = False
         self.vocab = {}; self.rev_vocab = {}
         self.idx_l = None; self.idx_r = None
         self.E_left = None; self.E_right = None
+        # Optional GNN embeddings/index
+        self.use_gnn = USE_GNN
+        self.gnn_ok = False
+        self.gnn_idx = None
+        self.E_gnn = None
 
         try:
             import faiss
@@ -32,6 +38,8 @@ class Recommender:
             right_idx_p = os.path.join(MODEL_DIR, "right.index")
             left_emb_p  = os.path.join(MODEL_DIR, "embed_left.npy")
             right_emb_p = os.path.join(MODEL_DIR, "embed_right.npy")
+            gnn_idx_p   = os.path.join(MODEL_DIR, "gnn.index")
+            gnn_emb_p   = os.path.join(MODEL_DIR, "gnn_embed.npy")
 
             if all(os.path.exists(p) for p in [vocab_path, left_idx_p, right_idx_p, left_emb_p, right_emb_p]):
                 with open(vocab_path) as f:
@@ -58,12 +66,30 @@ class Recommender:
                                     f"vocab={len(self.vocab)}, "
                                     f"Lidx={self.idx_l.ntotal}, Ridx={self.idx_r.ntotal}, "
                                     f"LE={self.E_left.shape}, RE={self.E_right.shape}")
+            # Try to load optional GNN artifacts
+            if all(os.path.exists(p) for p in [vocab_path, gnn_idx_p, gnn_emb_p]):
+                # vocab already loaded if bi-encoder present; if not, load it
+                if not self.vocab:
+                    with open(vocab_path) as f:
+                        self.vocab = json.load(f)
+                    self.rev_vocab = {v: k for k, v in self.vocab.items()}
+
+                self.gnn_idx = faiss.read_index(gnn_idx_p)
+                self.E_gnn = np.load(gnn_emb_p).astype("float32")
+                # normalize
+                n = np.linalg.norm(self.E_gnn, axis=1, keepdims=True); n[n==0]=1; self.E_gnn /= n
+                # size check
+                ok = (self.gnn_idx.ntotal == self.E_gnn.shape[0] == len(self.vocab))
+                self.gnn_ok = bool(ok)
+                if not ok:
+                    logging.warning(f"GNN size mismatch: vocab={len(self.vocab)}, idx={self.gnn_idx.ntotal}, E={self.E_gnn.shape}")
         except Exception as e:
             logging.warning(f"FAISS not loaded, falling back to rule-based. Reason: {e}")
 
         logging.info(f"MODEL_DIR: {MODEL_DIR}")
-        logging.info(f"FAISS loaded: {self.faiss_ok} | items: {len(self.vocab) if self.faiss_ok else 0}")
+        logging.info(f"FAISS loaded: {self.faiss_ok} | items: {len(self.vocab) if self.vocab else 0}")
         logging.info(f"Rule-based fallback loaded: left_json={len(self.left)} right_json={len(self.right)}")
+        logging.info(f"GNN available: {self.gnn_ok} | use_gnn={self.use_gnn}")
 
         # Seen/cold-start info
         self.seen = {"train_items": [], "val_items": [], "test_items": []}
@@ -80,38 +106,6 @@ class Recommender:
 
     def name_of(self, item_id: str) -> Optional[str]:
         return self.names.get(item_id)
-
-    def get_image_urls(self, item_id: str) -> List[str]:
-        """Get image URLs for a specific item"""
-        print(f"DEBUG: get_image_urls called for {item_id}")  # Simple debug print
-        try:
-            import pandas as pd
-            meta_path = os.path.join(self.MODEL_DIR, "item_meta.parquet")
-            print(f"DEBUG: Meta path: {meta_path}")  # Simple debug print
-            if os.path.exists(meta_path):
-                print(f"DEBUG: Meta file exists")  # Simple debug print
-                meta_df = pd.read_parquet(meta_path)
-                print(f"DEBUG: Meta file loaded, shape: {meta_df.shape}")  # Simple debug print
-                if item_id in meta_df.index:
-                    print(f"DEBUG: Item {item_id} found in meta file")  # Simple debug print
-                    image_urls = meta_df.loc[item_id, "image_urls"]
-                    print(f"DEBUG: Image URLs: {image_urls}")  # Simple debug print
-                    print(f"DEBUG: Type of image_urls: {type(image_urls)}")  # Simple debug print
-                    # Convert to list if it's a pandas Series or other iterable
-                    if hasattr(image_urls, '__iter__') and not isinstance(image_urls, str):
-                        image_urls_list = list(image_urls)
-                        print(f"DEBUG: Converted to list: {image_urls_list}")  # Simple debug print
-                        return image_urls_list
-                    elif isinstance(image_urls, list):
-                        return image_urls
-                else:
-                    print(f"DEBUG: Item {item_id} not found in meta file index")  # Simple debug print
-            else:
-                print(f"DEBUG: Meta file not found at {meta_path}")  # Simple debug print
-            return []
-        except Exception as e:
-            print(f"DEBUG: Exception in get_image_urls: {e}")  # Simple debug print
-            return []
 
     def seen_status(self, item_id: str):
         if item_id in self.seen_train: return "train"
@@ -139,6 +133,29 @@ class Recommender:
             if neighbor_name in seen_names:
                 continue  # Skip if we already have this product name
                 
+            seen.add(nid)
+            seen_names.add(neighbor_name)
+            out.append({"item": nid, "confidence": float(max(score, 0.0))})
+            if len(out) >= k: break
+        return out
+
+    def _gnn_neighbors(self, item_id: str, k: int):
+        if not (self.gnn_ok and self.use_gnn):
+            return None
+        i = self.vocab.get(item_id)
+        if i is None:
+            return None
+        q = self.E_gnn[i:i+1]
+        D, I = self.gnn_idx.search(q, k + 10)
+        out, seen = [], {item_id}
+        seen_names = {self.name_of(item_id)}
+        for idx, score in zip(I[0], D[0]):
+            if idx < 0: continue
+            nid = self.rev_vocab.get(int(idx))
+            if not nid or nid in seen: continue
+            neighbor_name = self.name_of(nid)
+            if neighbor_name in seen_names:
+                continue
             seen.add(nid)
             seen_names.add(neighbor_name)
             out.append({"item": nid, "confidence": float(max(score, 0.0))})
@@ -173,8 +190,15 @@ class Recommender:
         return deduplicated
 
     def get(self, item_id: str, k: int = TOP_K):
-        l = self._faiss_neighbors(item_id, "left",  k) or self.left.get(item_id, [])
-        r = self._faiss_neighbors(item_id, "right", k) or self.right.get(item_id, [])
+        # Prefer GNN if enabled and available
+        if self.use_gnn and self.gnn_ok:
+            g = self._gnn_neighbors(item_id, k) or []
+            g = self._deduplicate_by_name(g, item_id)[:k]
+            l = g[:]  # symmetric in GNN space
+            r = g[:]
+        else:
+            l = self._faiss_neighbors(item_id, "left",  k) or self.left.get(item_id, [])
+            r = self._faiss_neighbors(item_id, "right", k) or self.right.get(item_id, [])
         
         # Deduplicate by product name
         l = self._deduplicate_by_name(l, item_id)[:k]
