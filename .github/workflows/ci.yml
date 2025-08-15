@@ -243,30 +243,12 @@ jobs:
           mkdir -p "$HOME/.cache/buildx"
       - name: Build images (cached)
         run: |
-          docker buildx build \
-            --cache-from type=local,src=$HOME/.cache/buildx \
-            --cache-to   type=local,dest=$HOME/.cache/buildx,mode=max \
-            -t ai-parser AI/services/parser --load
-          docker buildx build \
-            --cache-from type=local,src=$HOME/.cache/buildx \
-            --cache-to   type=local,dest=$HOME/.cache/buildx,mode=max \
-            -t ai-trainer-bienc AI/services/trainer-bienc --load
-          docker buildx build \
-            --cache-from type=local,src=$HOME/.cache/buildx \
-            --cache-to   type=local,dest=$HOME/.cache/buildx,mode=max \
-            -t ai-trainer-gnn AI/services/trainer-gnn --load
-          docker buildx build \
-            --cache-from type=local,src=$HOME/.cache/buildx \
-            --cache-to   type=local,dest=$HOME/.cache/buildx,mode=max \
-            -t ai-featurizer AI/services/featurizer --load
-          docker buildx build \
-            --cache-from type=local,src=$HOME/.cache/buildx \
-            --cache-to   type=local,dest=$HOME/.cache/buildx,mode=max \
-            -t ai-api AI/services/api --load
-          docker buildx build \
-            --cache-from type=local,src=$HOME/.cache/buildx \
-            --cache-to   type=local,dest=$HOME/.cache/buildx,mode=max \
-            -t ai-ui AI/services/ui --load
+          docker buildx bake \
+            -f AI/docker-compose.yml \
+            --set *.cache-from=type=local,src=$HOME/.cache/buildx \
+            --set *.cache-to=type=local,dest=$HOME/.cache/buildx,mode=max \
+            --load \
+            parser trainer-bienc trainer-gnn featurizer api ui
 
   promote-model:
     runs-on: self-hosted
