@@ -141,20 +141,20 @@ jobs:
                           if src_p != dst_p:
                               shutil.copy2(src_p, dst_p)
                           found.add(f)
-               # If a matching dataset was logged, copy it into CI dataset path
-               data_parsed = None
-               for root, dirs, files in os.walk(dst):
-                   for f in files:
-                       if f == 'parsed.parquet' and os.path.basename(root) == 'data':
-                           data_parsed = os.path.join(root, f)
-                           break
-                   if data_parsed:
-                       break
-               if data_parsed:
-                   os.makedirs('AI/data/interim', exist_ok=True)
-                   import shutil as _sh
-                   _sh.copy2(data_parsed, 'AI/data/interim/parsed.parquet')
-                   print('Copied dataset to AI/data/interim/parsed.parquet')
+              # If a matching dataset was logged, copy it into CI dataset path
+              data_parsed = None
+              for root, dirs, files in os.walk(dst):
+                  for f in files:
+                      if f == 'parsed.parquet' and os.path.basename(root) == 'data':
+                          data_parsed = os.path.join(root, f)
+                          break
+                  if data_parsed:
+                      break
+              if data_parsed:
+                  os.makedirs('AI/data/interim', exist_ok=True)
+                  import shutil as _sh
+                  _sh.copy2(data_parsed, 'AI/data/interim/parsed.parquet')
+                  print('Copied dataset to AI/data/interim/parsed.parquet')
               ok = all(n in found for n in needed)
               print('Artifacts found:', sorted(found))
           except Exception as e:
