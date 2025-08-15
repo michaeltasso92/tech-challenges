@@ -117,9 +117,7 @@ jobs:
           ok = False
           try:
               if src.startswith('runs:/'):
-                  # Use client.download_artifacts with run_id
                   run_id = src.split('/')[1]
-                  # artifact path portion after '/artifacts/' if present
                   ap = ''
                   if '/artifacts/' in src:
                       ap = src.split('/artifacts/', 1)[1]
@@ -127,8 +125,24 @@ jobs:
                   client.download_artifacts(run_id, ap, dst)
               else:
                   mlflow.artifacts.download_artifacts(artifact_uri=src, dst_path=dst)
-              ok = True
               print('Downloaded model artifacts to', dst)
+              # Normalize: collect required files from any subfolder
+              import shutil
+              needed = [
+                  'item_vocab.json', 'left.index', 'right.index',
+                  'embed_left.npy', 'embed_right.npy', 'seen_items.json'
+              ]
+              found = set()
+              for root, dirs, files in os.walk(dst):
+                  for f in files:
+                      if f in needed and f not in found:
+                          src_p = os.path.join(root, f)
+                          dst_p = os.path.join(dst, f)
+                          if src_p != dst_p:
+                              shutil.copy2(src_p, dst_p)
+                          found.add(f)
+              ok = all(n in found for n in needed)
+              print('Artifacts found:', sorted(found))
           except Exception as e:
               print('Model download skipped:', e)
           open('has_model.txt','w').write('true' if ok else 'false')
