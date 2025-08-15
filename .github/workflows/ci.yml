@@ -135,18 +135,40 @@ jobs:
       metrics_ok: ${{ steps.gate.outputs.ok }}
 
   docker-build:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: test
     steps:
       - uses: actions/checkout@v4
-      - name: Build images
+      - name: Configure buildx and cache
         run: |
-          docker build -t ai-parser           AI/services/parser
-          docker build -t ai-trainer-bienc    AI/services/trainer-bienc
-          docker build -t ai-trainer-gnn      AI/services/trainer-gnn
-          docker build -t ai-featurizer       AI/services/featurizer
-          docker build -t ai-api              AI/services/api
-          docker build -t ai-ui               AI/services/ui
+          docker buildx use ci-builder >/dev/null 2>&1 || docker buildx create --name ci-builder --use
+          mkdir -p "$HOME/.cache/buildx"
+      - name: Build images (cached)
+        run: |
+          docker buildx build \
+            --cache-from type=local,src=$HOME/.cache/buildx \
+            --cache-to   type=local,dest=$HOME/.cache/buildx,mode=max \
+            -t ai-parser AI/services/parser --load
+          docker buildx build \
+            --cache-from type=local,src=$HOME/.cache/buildx \
+            --cache-to   type=local,dest=$HOME/.cache/buildx,mode=max \
+            -t ai-trainer-bienc AI/services/trainer-bienc --load
+          docker buildx build \
+            --cache-from type=local,src=$HOME/.cache/buildx \
+            --cache-to   type=local,dest=$HOME/.cache/buildx,mode=max \
+            -t ai-trainer-gnn AI/services/trainer-gnn --load
+          docker buildx build \
+            --cache-from type=local,src=$HOME/.cache/buildx \
+            --cache-to   type=local,dest=$HOME/.cache/buildx,mode=max \
+            -t ai-featurizer AI/services/featurizer --load
+          docker buildx build \
+            --cache-from type=local,src=$HOME/.cache/buildx \
+            --cache-to   type=local,dest=$HOME/.cache/buildx,mode=max \
+            -t ai-api AI/services/api --load
+          docker buildx build \
+            --cache-from type=local,src=$HOME/.cache/buildx \
+            --cache-to   type=local,dest=$HOME/.cache/buildx,mode=max \
+            -t ai-ui AI/services/ui --load
 
   promote-model:
     runs-on: self-hosted
