@@ -241,6 +241,10 @@ jobs:
         run: |
           docker buildx use ci-builder >/dev/null 2>&1 || docker buildx create --name ci-builder --use
           mkdir -p "$HOME/.cache/buildx"
+      - name: Prepare compose env file for build
+        working-directory: AI
+        run: |
+          [ -f .env ] || touch .env
       - name: Build images (cached)
         run: |
           docker buildx bake \
