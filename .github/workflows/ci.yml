@@ -15,7 +15,7 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     env:
       MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_URL }}
       MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_USER }}
@@ -143,7 +143,7 @@ jobs:
           docker build -t ai-ui               AI/services/ui
 
   promote-model:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     needs: test
     if: ${{ github.ref == 'refs/heads/main' && needs.test.outputs.metrics_ok == 'true' }}
     env:
@@ -174,7 +174,7 @@ jobs:
           PY
 
   rollback:
-    runs-on: ubuntu-latest
+    runs-on: self-hosted
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.rollback_version != '' }}
     env:
       MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_URL }}
