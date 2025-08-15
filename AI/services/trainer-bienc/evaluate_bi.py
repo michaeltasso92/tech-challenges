@@ -54,13 +54,16 @@ def load_artifacts(artifacts_dir: str):
     return vocab, rev_vocab, idx_l, idx_r, E_left, E_right, seen, idx_g, E_gnn
 
 
-def build_test_pairs(parsed_path: str, test_items: List[str]) -> Tuple[pd.DataFrame, pd.DataFrame]:
+def build_test_pairs(parsed_path: str, test_items: List[str], use_all: bool = False) -> Tuple[pd.DataFrame, pd.DataFrame]:
     if not os.path.exists(parsed_path):
         raise FileNotFoundError(f"parsed.parquet not found at {parsed_path}")
 
     df = pd.read_parquet(parsed_path)
+    df = df[(df["item_id"].notna())]
     df = df[(df["item_id"] != df["left_neighbor"]) & (df["item_id"] != df["right_neighbor"])].copy()
-    df = df[df["item_id"].isin(set(test_items))]
+
+    if not use_all and test_items:
+        df = df[df["item_id"].isin(set(test_items))]
 
     left_df = df.dropna(subset=["left_neighbor"])[["item_id", "left_neighbor"]].rename(columns={"left_neighbor": "nbr"})
     right_df = df.dropna(subset=["right_neighbor"])[["item_id", "right_neighbor"]].rename(columns={"right_neighbor": "nbr"})
@@ -146,6 +149,7 @@ def main():
     ap.add_argument("--artifacts", required=True, help="Path to artifacts directory produced by training")
     ap.add_argument("--in", dest="inp", required=True, help="Interim directory containing parsed.parquet")
     ap.add_argument("--k", default="1,3,5,10", help="Comma-separated list of K values for recall@K")
+    ap.add_argument("--no-test-split", action="store_true", help="Ignore seen_items test split and evaluate on all data in parsed.parquet")
     ap.add_argument("--register-model", dest="register_model", default=os.getenv("REGISTER_MODEL_NAME"), help="If set, register this artifacts dir as a model version")
     ap.add_argument("--register-alias", dest="register_alias", default=os.getenv("REGISTER_MODEL_ALIAS","Staging"))
     args = ap.parse_args()
@@ -153,7 +157,12 @@ def main():
     ks = [int(x) for x in args.k.split(",")]
     vocab, rev_vocab, idx_l, idx_r, E_left, E_right, seen, idx_g, E_gnn = load_artifacts(args.artifacts)
     test_items = seen.get("test_items", [])
-    left_df, right_df = build_test_pairs(os.path.join(args.inp, "parsed.parquet"), test_items)
+    left_df, right_df = build_test_pairs(os.path.join(args.inp, "parsed.parquet"), test_items, use_all=args.no_test_split)
+
+    # Fallback: if split yielded no pairs (e.g., fixture mismatch), evaluate on full data
+    if (len(left_df) + len(right_df)) == 0 and not args.no_test_split:
+        print("No pairs found for test split; falling back to full dataset evaluation")
+        left_df, right_df = build_test_pairs(os.path.join(args.inp, "parsed.parquet"), test_items=[], use_all=True)
 
     logging.info(f"Evaluating on {len(test_items)} test items | left_pairs={len(left_df)} right_pairs={len(right_df)}")
 

@@ -4,5 +4,9 @@
 __pycache__
 data/
 mlruns/
+AI/mlflow/
+AI/mlruns/
+mlruns/
+mlflow/
 AI/models/**
 !AI/models/.gitkeep
