@@ -262,6 +262,13 @@ class BiEncoderTrainer:
 
                     # Log artifacts directory (embeddings, faiss, vocab)
                     mlflow.log_artifacts(self.artifacts_dir, artifact_path="artifacts")
+                    # Also log the dataset used for training to enable CI evaluation on matching data
+                    try:
+                        parsed_p = os.path.join(self.interim_dir, "parsed.parquet")
+                        if os.path.exists(parsed_p):
+                            mlflow.log_artifact(parsed_p, artifact_path="data")
+                    except Exception as _:
+                        pass
 
                     logging.info(f"Final metrics logged: items={len(self.items)}, left_dim={emb_left.shape[1]}, right_dim={emb_right.shape[1]}")
 
