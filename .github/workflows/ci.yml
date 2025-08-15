@@ -90,15 +90,35 @@ jobs:
           "$VENV/bin/python" -m pip install -q mlflow
           rm -rf AI/models/artifacts || true
           "$VENV/bin/python" - <<'PY'
-          import os, mlflow
+          import os, re, mlflow
+          from mlflow.tracking import MlflowClient
+          tracking = os.getenv('MLFLOW_TRACKING_URI')
+          client = MlflowClient(tracking)
           dst = 'AI/models/artifacts'
           os.makedirs(dst, exist_ok=True)
           ref = os.environ.get('MLFLOW_MODEL_REF', 'models:/bi-encoder@Staging')
+          # Resolve models:/ URIs to underlying runs:/ source to avoid registry artifact quirks
+          def resolve_source(ref: str) -> str:
+              if ref.startswith('runs:/') or ref.startswith('mlflow-artifacts:') or ref.startswith('file:'):
+                  return ref
+              m_ver = re.match(r"models:/([^/]+)/([0-9]+)$", ref)
+              if m_ver:
+                  name, ver = m_ver.group(1), m_ver.group(2)
+                  mv = client.get_model_version(name, ver)
+                  return mv.source
+              m_alias = re.match(r"models:/([^@]+)@(.+)$", ref)
+              if m_alias:
+                  name, alias = m_alias.group(1), m_alias.group(2)
+                  mv = client.get_model_version_by_alias(name, alias)
+                  return mv.source
+              return ref
+          src = resolve_source(ref)
+          print('Resolved model ref:', ref, '->', src)
           ok = False
           try:
-              mlflow.artifacts.download_artifacts(artifact_uri=ref, dst_path=dst)
+              mlflow.artifacts.download_artifacts(artifact_uri=src, dst_path=dst)
               ok = True
-              print('Downloaded model artifacts from', ref, 'to', dst)
+              print('Downloaded model artifacts from', src, 'to', dst)
           except Exception as e:
               print('Model download skipped:', e)
           open('has_model.txt','w').write('true' if ok else 'false')
