@@ -218,13 +218,17 @@ class GNNGraphBuilder:
 
     # ------------------------------ GNN model ---------------------------------
     class _HeteroSAGE(nn.Module):
-        def __init__(self, in_dim: int, hidden_dim: int, out_dim: int):
+        def __init__(self, in_dim: int, hidden_dim: int, out_dim: int,
+                     num_brands: int = 1, brand_dim: int = 32):
             super().__init__()
+            # Trainable brand embedding, concatenated to node features
+            self.brand_emb = nn.Embedding(num_embeddings=max(1, int(num_brands)), embedding_dim=int(brand_dim))
+            fused_in = in_dim + int(brand_dim)
             self.layers = nn.ModuleList([
                 HeteroGraphConv(
                     {
-                        'left':  SAGEConv(in_dim, hidden_dim, aggregator_type='mean'),
-                        'right': SAGEConv(in_dim, hidden_dim, aggregator_type='mean'),
+                        'left':  SAGEConv(fused_in, hidden_dim, aggregator_type='mean'),
+                        'right': SAGEConv(fused_in, hidden_dim, aggregator_type='mean'),
                     },
                     aggregate='mean'
                 ),
@@ -237,14 +241,27 @@ class GNNGraphBuilder:
                 )
             ])
             self.act = nn.ReLU()
+            # Directional projection heads for asymmetric scoring
+            self.proj_left = nn.Linear(out_dim, out_dim, bias=False)
+            self.proj_right = nn.Linear(out_dim, out_dim, bias=False)
 
-        def forward(self, g: dgl.DGLHeteroGraph, x_dict: Dict[str, torch.Tensor]) -> torch.Tensor:
-            h = x_dict
+        def forward(self, g: dgl.DGLHeteroGraph, x_dict: Dict[str, torch.Tensor]) -> Dict[str, torch.Tensor]:
+            # Concatenate brand embedding if present
+            brand_ids = g.nodes['item'].data.get('brand_ids', None)
+            if brand_ids is not None:
+                brand_vec = self.brand_emb(brand_ids)
+                x = torch.cat([x_dict['item'], brand_vec], dim=1)
+                h = {'item': x}
+            else:
+                h = x_dict
             for i, layer in enumerate(self.layers):
                 h = layer(g, h)
                 # Only one node type: 'item'
                 h['item'] = self.act(h['item']) if i == 0 else h['item']
-            return h['item']  # (num_nodes, out_dim)
+            h_item = h['item']
+            h_left = self.proj_left(h_item)
+            h_right = self.proj_right(h_item)
+            return {'shared': h_item, 'left': h_left, 'right': h_right}
 
     @staticmethod
     def _dot_score(h: torch.Tensor, src: torch.Tensor, dst: torch.Tensor) -> torch.Tensor:
@@ -264,14 +281,21 @@ class GNNGraphBuilder:
         logging.info("Saved: gnn_X.npy, gnn_left/right_{src,dst}.npy")
 
     def train_gnn(self, g: dgl.DGLHeteroGraph, X: np.ndarray, l_src, l_dst, r_src, r_dst,
-                  l_w=None, r_w=None) -> np.ndarray:
+                  l_w=None, r_w=None, brand_ids: np.ndarray | None = None, brand_dim: int = 32) -> np.ndarray:
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         g = g.to(device)
         feat = torch.from_numpy(X).to(device)
         # Assign node feature
         g.nodes['item'].data['feat'] = feat
+        # Assign brand ids (optional)
+        if brand_ids is None:
+            brand_ids = np.zeros((X.shape[0],), dtype=np.int64)
+        b_ids_t = torch.as_tensor(brand_ids, device=device, dtype=torch.long)
+        g.nodes['item'].data['brand_ids'] = b_ids_t
 
-        model = self._HeteroSAGE(in_dim=feat.shape[1], hidden_dim=self.hidden_dim, out_dim=self.out_dim).to(device)
+        num_brands = int(brand_ids.max()) + 1 if brand_ids.size else 1
+        model = self._HeteroSAGE(in_dim=feat.shape[1], hidden_dim=self.hidden_dim, out_dim=self.out_dim,
+                                 num_brands=num_brands, brand_dim=brand_dim).to(device)
         opt = torch.optim.Adam(model.parameters(), lr=self.lr, weight_decay=1e-4)
         bce = nn.BCEWithLogitsLoss()
 
@@ -286,12 +310,14 @@ class GNNGraphBuilder:
         for epoch in range(1, self.epochs+1):
             model.train()
             opt.zero_grad()
-            h = model(g, {'item': g.nodes['item'].data['feat']})
+            out = model(g, {'item': g.nodes['item'].data['feat']})
+            h_left = out['left']
+            h_right = out['right']
             # LEFT relation loss
-            l_pos_score = self._dot_score(h, l_src_t, l_dst_t)
+            l_pos_score = self._dot_score(h_left, l_src_t, l_dst_t)
             l_neg_dst = self._neg_sample(self.num_nodes, len(l_src_t) * self.neg_ratio, device)
             l_neg_src = l_src_t.repeat_interleave(self.neg_ratio)
-            l_neg_score = self._dot_score(h, l_neg_src, l_neg_dst)
+            l_neg_score = self._dot_score(h_left, l_neg_src, l_neg_dst)
             l_logits = torch.cat([l_pos_score, l_neg_score], dim=0)
             l_labels = torch.cat([torch.ones_like(l_pos_score), torch.zeros_like(l_neg_score)], dim=0)
             if self.use_edge_weights and l_w_t is not None and len(l_w_t) == len(l_pos_score):
@@ -302,10 +328,10 @@ class GNNGraphBuilder:
             else:
                 left_loss = bce(l_logits, l_labels)
             # RIGHT relation loss
-            r_pos_score = self._dot_score(h, r_src_t, r_dst_t)
+            r_pos_score = self._dot_score(h_right, r_src_t, r_dst_t)
             r_neg_dst = self._neg_sample(self.num_nodes, len(r_src_t) * self.neg_ratio, device)
             r_neg_src = r_src_t.repeat_interleave(self.neg_ratio)
-            r_neg_score = self._dot_score(h, r_neg_src, r_neg_dst)
+            r_neg_score = self._dot_score(h_right, r_neg_src, r_neg_dst)
             r_logits = torch.cat([r_pos_score, r_neg_score], dim=0)
             r_labels = torch.cat([torch.ones_like(r_pos_score), torch.zeros_like(r_neg_score)], dim=0)
             if self.use_edge_weights and r_w_t is not None and len(r_w_t) == len(r_pos_score):
@@ -331,16 +357,26 @@ class GNNGraphBuilder:
         # Final embeddings
         model.eval()
         with torch.no_grad():
-            h = model(g, {'item': g.nodes['item'].data['feat']}).detach().cpu().numpy().astype('float32')
+            out = model(g, {'item': g.nodes['item'].data['feat']})
+            h_shared = out['shared'].detach().cpu().numpy().astype('float32')
+            hL = out['left'].detach().cpu().numpy().astype('float32')
+            hR = out['right'].detach().cpu().numpy().astype('float32')
         # L2 normalize
-        n = np.linalg.norm(h, axis=1, keepdims=True); n[n==0]=1.0; h = h / n
-        np.save(os.path.join(self.artifacts, 'gnn_embed.npy'), h)
-        # Build FAISS index (inner product on normalized vectors = cosine similarity)
-        index = faiss.IndexFlatIP(h.shape[1])
-        index.add(h)
-        faiss.write_index(index, os.path.join(self.artifacts, 'gnn.index'))
-        logging.info(f"Saved: gnn_embed.npy shape={h.shape} and gnn.index with {index.ntotal} vectors")
-        return h
+        for E in (h_shared, hL, hR):
+            n = np.linalg.norm(E, axis=1, keepdims=True); n[n==0]=1.0; E[:] = E / n
+        # Save embeddings
+        np.save(os.path.join(self.artifacts, 'gnn_embed.npy'), h_shared)
+        np.save(os.path.join(self.artifacts, 'gnn_left_embed.npy'), hL)
+        np.save(os.path.join(self.artifacts, 'gnn_right_embed.npy'), hR)
+        # Build FAISS indexes (inner product on normalized vectors = cosine)
+        idx_shared = faiss.IndexFlatIP(h_shared.shape[1]); idx_shared.add(h_shared)
+        idx_left   = faiss.IndexFlatIP(hL.shape[1]);       idx_left.add(hL)
+        idx_right  = faiss.IndexFlatIP(hR.shape[1]);       idx_right.add(hR)
+        faiss.write_index(idx_shared, os.path.join(self.artifacts, 'gnn.index'))
+        faiss.write_index(idx_left,   os.path.join(self.artifacts, 'gnn_left.index'))
+        faiss.write_index(idx_right,  os.path.join(self.artifacts, 'gnn_right.index'))
+        logging.info(f"Saved: gnn_embed.npy {h_shared.shape}, gnn_left/right_embed.npy {hL.shape}/{hR.shape} and indexes")
+        return h_shared
 
     def run(self):
         with mlflow.start_run(run_name="gnn-graph-building"):
@@ -357,7 +393,10 @@ class GNNGraphBuilder:
             g = self.build_heterograph(l_src, l_dst, r_src, r_dst, l_w, r_w)  # topology + weights
             self.save_pretrain_dump(X, l_src, l_dst, r_src, r_dst)
             # Train GNN to refine embeddings via link prediction
-            h = self.train_gnn(g, X, l_src, l_dst, r_src, r_dst, l_w=l_w, r_w=r_w)
+            # Load brand ids saved earlier (optional)
+            brand_ids_path = os.path.join(self.artifacts, 'gnn_brand_ids.npy')
+            brand_ids = np.load(brand_ids_path) if os.path.exists(brand_ids_path) else None
+            h = self.train_gnn(g, X, l_src, l_dst, r_src, r_dst, l_w=l_w, r_w=r_w, brand_ids=brand_ids, brand_dim=32)
             
             # Log metrics
             mlflow.log_metrics({

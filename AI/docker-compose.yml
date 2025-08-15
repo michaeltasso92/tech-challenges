@@ -43,7 +43,7 @@ services:
       - ./data:/app/data
       - ./models:/app/models
       - hf_cache:/root/.cache/huggingface   # speed up downloads
-    command: ["python","train_bi.py","--in","/app/data/interim","--artifacts","/app/models/artifacts","--base","intfloat/e5-small-v2","--epochs","3","--batch","64"]
+    command: ["python","train_bi.py","--in","/app/data/interim","--artifacts","/app/models/artifacts","--base","intfloat/e5-small-v2","--epochs","5","--batch","64"]
     restart: "no"
 
   trainer-gnn:

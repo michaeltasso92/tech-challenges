@@ -90,28 +90,43 @@ def get_image_urls(item_id:str):
     return []
 
 def _neighbor_card_html(name: str, item_id: str, score: float, seen: str, image_url: str = "") -> str:
-    img = f'<img src="{image_url}" alt="{name}" style="max-width: 80px; max-height: 80px; border-radius: 8px; margin-bottom: 10px; background: white; padding: 5px;"/>' if image_url else ""
-    # Single-line HTML to avoid Markdown interpreting indented lines as code blocks
+    img = (
+        f'<img src="{image_url}" alt="{name}" '
+        f'style="width:auto; height:80px; border-radius:8px; margin-bottom:8px; background:white; padding:5px; object-fit:contain;"/>'
+        if image_url else ""
+    )
     return (
-        f'<div style="background: white; border-radius: 12px; padding: 15px; margin-bottom: 12px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); border-left: 4px solid #3b82f6; text-align: center;">'
+        f'<div style="background:white; border-radius:12px; padding:14px; margin-bottom:12px; '
+        f'box-shadow:0 2px 6px rgba(0,0,0,0.08); border-left:4px solid #3b82f6; text-align:center; '
+        f'display:flex; flex-direction:column; align-items:center; gap:6px; box-sizing:border-box; '
+        f'min-height:220px; overflow:hidden;">'
         f'{img}'
-        f'<div style="font-weight: 600; color: #1e293b; margin-bottom: 5px; font-size: 14px;">{name}</div>'
-        f'<div style="font-size: 11px; color: #64748b; margin-bottom: 8px; font-family: monospace;">{item_id}</div>'
-        f'<div style="display: flex; justify-content: space-between; align-items: center; font-size: 12px;">'
-        f'<span style="background: #f1f5f9; padding: 2px 8px; border-radius: 12px; color: #475569; font-weight: 500;">Score: {float(score):.3f}</span>'
+        f'<div style="font-weight:600; color:#1e293b; font-size:14px; margin:0; '
+        f'max-height:40px; line-height:20px; overflow:hidden; text-overflow:ellipsis; '
+        f'display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; word-break:break-word;">{name}</div>'
+        f'<div style="font-size:11px; color:#64748b; font-family:monospace; margin:0; word-break:break-all;">{item_id}</div>'
+        f'<div style="display:flex; justify-content:space-between; align-items:center; gap:8px; font-size:12px;">'
+        f'<span style="background:#f1f5f9; padding:2px 8px; border-radius:12px; color:#475569; font-weight:500;">Score: {float(score):.3f}</span>'
         f'{seen_badge(str(seen))}'
-        f'</div></div>'
+        f'</div>'
+        f'</div>'
     )
 
 def _selected_card_html(name: str, item_id: str, image_url: str | None, seen: str) -> str:
-    img = f'<img src="{image_url}" alt="{name}" style="max-width: 150px; max-height: 150px; border-radius: 10px; margin-bottom: 15px; background: white; padding: 10px;"/>' if image_url else ""
+    img = (
+        f'<img src="{image_url}" alt="{name}" '
+        f'style="width:auto; height:150px; border-radius:10px; margin-bottom:12px; background:white; padding:10px; object-fit:contain;"/>'
+        if image_url else ""
+    )
     return (
-        f'<div style="background: linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%); border-radius: 20px; padding: 25px; text-align: center; color: white; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); margin: 20px 0;">'
+        f'<div style="background:linear-gradient(135deg,#3b82f6 0%,#1d4ed8 100%); border-radius:20px; padding:24px; text-align:center; '
+        f'color:white; box-shadow:0 10px 15px -3px rgba(0,0,0,0.1); margin:20px 0; min-height:360px; box-sizing:border-box; overflow:hidden;">'
         f'{img}'
-        f'<h3 style="margin: 0 0 10px 0; font-size: 20px;">{name}</h3>'
-        f'<div style="margin-bottom: 15px;">{seen_badge(seen)}</div>'
-        f'<div style="font-size: 12px; opacity: 0.9; font-family: monospace;">{item_id}</div>'
-        f'<div style="margin-top: 15px; font-size: 14px; opacity: 0.8;">Selected Product</div>'
+        f'<h3 style="margin:0 0 8px 0; font-size:20px; line-height:22px; max-height:44px; overflow:hidden; text-overflow:ellipsis; '
+        f'display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; word-break:break-word;">{name}</h3>'
+        f'<div style="margin-bottom:12px;">{seen_badge(seen)}</div>'
+        f'<div style="font-size:12px; opacity:0.9; font-family:monospace; word-break:break-all;">{item_id}</div>'
+        f'<div style="margin-top:12px; font-size:14px; opacity:0.85;">Selected Product</div>'
         f'</div>'
     )
 
@@ -236,17 +251,17 @@ if run and selected_id:
                 with st.container():
                     img_url = row['image_urls'][0] if row['image_urls'] else ""
                     html = _neighbor_card_html(row['neighbor'], row['item'], float(row['confidence']), str(row['seen']), img_url)
-                    st_html(html, height=170)
+                    st_html(html, height=230)
     
     with center_col:
         # Display product image if available
         if selected_images:
             # Use the first image (usually the main product image)
             main_image_url = selected_images[0]
-            st_html(_selected_card_html(qname, selected_id, main_image_url, qseen), height=300)
+            st_html(_selected_card_html(qname, selected_id, main_image_url, qseen), height=380)
         else:
             # Fallback without image
-            st_html(_selected_card_html(qname, selected_id, None, qseen), height=220)
+            st_html(_selected_card_html(qname, selected_id, None, qseen), height=280)
     
     with right_col:
         st.markdown("#### Right Shelf ➡️")
@@ -257,7 +272,7 @@ if run and selected_id:
                 with st.container():
                     img_url = row['image_urls'][0] if row['image_urls'] else ""
                     html = _neighbor_card_html(row['neighbor'], row['item'], float(row['confidence']), str(row['seen']), img_url)
-                    st_html(html, height=170)
+                    st_html(html, height=230)
 
     # Additional info below the shelf
     st.markdown("---")
