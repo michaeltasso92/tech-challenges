@@ -121,10 +121,32 @@ jobs:
                   ap = ''
                   if '/artifacts/' in src:
                       ap = src.split('/artifacts/', 1)[1]
-                  print('Downloading from run', run_id, 'path', ap or '(root)')
-                  client.download_artifacts(run_id, ap, dst)
+                  # Try candidate paths: explicit path, then root
+                  tried = []
+                  for candidate in ([ap] if ap else ['']) + ['']:
+                      if candidate in tried: continue
+                      tried.append(candidate)
+                      try:
+                          print('Attempting download from run', run_id, 'path', candidate or '(root)')
+                          client.download_artifacts(run_id, candidate, dst)
+                          ok = True
+                          break
+                      except Exception as e2:
+                          print('Download attempt failed for', candidate or '(root)', ':', e2)
+                  if not ok:
+                      # Enumerate available top-level artifacts for debugging, then try each directory
+                      arts = client.list_artifacts(run_id)
+                      print('Available top-level artifacts:', [a.path for a in arts])
+                      for a in arts:
+                          try:
+                              client.download_artifacts(run_id, a.path, dst)
+                              ok = True
+                              break
+                          except Exception as e3:
+                              print('Download attempt failed for', a.path, ':', e3)
               else:
                   mlflow.artifacts.download_artifacts(artifact_uri=src, dst_path=dst)
+                  ok = True
               print('Downloaded model artifacts to', dst)
               # Normalize: collect required files from any subfolder
               import shutil
