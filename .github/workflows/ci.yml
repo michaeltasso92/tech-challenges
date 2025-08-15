@@ -116,9 +116,19 @@ jobs:
           print('Resolved model ref:', ref, '->', src)
           ok = False
           try:
-              mlflow.artifacts.download_artifacts(artifact_uri=src, dst_path=dst)
+              if src.startswith('runs:/'):
+                  # Use client.download_artifacts with run_id
+                  run_id = src.split('/')[1]
+                  # artifact path portion after '/artifacts/' if present
+                  ap = ''
+                  if '/artifacts/' in src:
+                      ap = src.split('/artifacts/', 1)[1]
+                  print('Downloading from run', run_id, 'path', ap or '(root)')
+                  client.download_artifacts(run_id, ap, dst)
+              else:
+                  mlflow.artifacts.download_artifacts(artifact_uri=src, dst_path=dst)
               ok = True
-              print('Downloaded model artifacts from', src, 'to', dst)
+              print('Downloaded model artifacts to', dst)
           except Exception as e:
               print('Model download skipped:', e)
           open('has_model.txt','w').write('true' if ok else 'false')
