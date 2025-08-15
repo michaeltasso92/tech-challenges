@@ -58,10 +58,11 @@ services:
 
   mlflow:
     image: ghcr.io/mlflow/mlflow:v2.14.2
-    command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri /mlruns --default-artifact-root /mlruns --workers 4
+    command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri sqlite:////mlflow/mlflow.db --default-artifact-root /mlruns --workers 4
     ports: ["5000:5000"]
     volumes:
       - ./mlruns:/mlruns
+      - ./mlflow:/mlflow
     environment:
       - MLFLOW_TRACKING_URI=http://localhost:5000
     restart: unless-stopped

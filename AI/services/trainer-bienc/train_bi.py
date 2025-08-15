@@ -21,7 +21,7 @@ logging.basicConfig(format="%(asctime)s - %(levelname)s - %(message)s",
 class BiEncoderTrainer:
     def __init__(self, base_model: str, interim_dir: str, artifacts_dir: str,
                  epochs: int = 2, batch_size: int = 256, dim: int = 384, seed: int = 42,
-                 experiment_name: str = "bi-encoder-training"):
+                 experiment_name: str = "bi-encoder-training", register_model: str = None, register_alias: str = None):
         self.base_model = base_model
         self.interim_dir = interim_dir
         self.artifacts_dir = artifacts_dir
@@ -30,6 +30,8 @@ class BiEncoderTrainer:
         self.dim = dim
         self.seed = seed
         self.experiment_name = experiment_name
+        self.register_model = register_model or os.getenv("REGISTER_MODEL_NAME")
+        self.register_alias = register_alias or os.getenv("REGISTER_MODEL_ALIAS", "Staging")
         # Select device: allow CPU override via FORCE_CPU=1, otherwise use CUDA when available
         force_cpu = os.getenv("FORCE_CPU", "0") == "1"
         self.device = "cuda" if (torch.cuda.is_available() and not force_cpu) else "cpu"
@@ -249,7 +251,7 @@ class BiEncoderTrainer:
         # Log final metrics and artifacts
         if self.mlflow_enabled:
             try:
-                with mlflow.start_run(run_name="bi-encoder-final-metrics"):
+                with mlflow.start_run(run_name="bi-encoder-final-metrics") as run:
                     mlflow.log_metrics({
                         "total_items": len(self.items),
                         "left_embedding_dim": emb_left.shape[1],
@@ -258,10 +260,33 @@ class BiEncoderTrainer:
                         "right_embeddings_shape": emb_right.shape[0]
                     })
 
-                    # Log artifacts
-                    mlflow.log_artifact(self.artifacts_dir, "artifacts")
+                    # Log artifacts directory (embeddings, faiss, vocab)
+                    mlflow.log_artifacts(self.artifacts_dir, artifact_path="artifacts")
 
                     logging.info(f"Final metrics logged: items={len(self.items)}, left_dim={emb_left.shape[1]}, right_dim={emb_right.shape[1]}")
+
+                    # Optionally register to MLflow Model Registry
+                    if self.register_model:
+                        try:
+                            from mlflow.tracking import MlflowClient
+                            client = MlflowClient()
+                            # Ensure registered model exists
+                            try:
+                                client.create_registered_model(self.register_model)
+                            except Exception:
+                                pass
+                            run_id = run.info.run_id
+                            source = f"runs:/{run_id}/artifacts/artifacts"
+                            mv = client.create_model_version(name=self.register_model, source=source, run_id=run_id)
+                            # Set alias for easy retrieval (used by CI)
+                            if self.register_alias:
+                                try:
+                                    client.set_registered_model_alias(self.register_model, self.register_alias, mv.version)
+                                except Exception:
+                                    pass
+                            logging.info(f"Registered model {self.register_model} v{mv.version} with alias {self.register_alias}")
+                        except Exception as e:
+                            logging.warning(f"Model registry registration failed: {e}")
             except Exception as e:
                 logging.warning(f"MLflow final logging failed: {e}")
                 logging.info(f"Final metrics: items={len(self.items)}, left_dim={emb_left.shape[1]}, right_dim={emb_right.shape[1]}")

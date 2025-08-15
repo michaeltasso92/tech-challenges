@@ -146,6 +146,8 @@ def main():
     ap.add_argument("--artifacts", required=True, help="Path to artifacts directory produced by training")
     ap.add_argument("--in", dest="inp", required=True, help="Interim directory containing parsed.parquet")
     ap.add_argument("--k", default="1,3,5,10", help="Comma-separated list of K values for recall@K")
+    ap.add_argument("--register-model", dest="register_model", default=os.getenv("REGISTER_MODEL_NAME"), help="If set, register this artifacts dir as a model version")
+    ap.add_argument("--register-alias", dest="register_alias", default=os.getenv("REGISTER_MODEL_ALIAS","Staging"))
     args = ap.parse_args()
 
     ks = [int(x) for x in args.k.split(",")]
@@ -179,6 +181,33 @@ def main():
         ml_metrics |= {f"gnn_{k}": v for k, v in gnn_metrics.items()}
     maybe_log_to_mlflow(ml_metrics,
                         {"artifacts": args.artifacts, "interim": args.inp, "ks": args.k})
+
+    # Optional: register this artifacts directory as a model version
+    if args.register_model:
+        try:
+            import mlflow
+            from mlflow.tracking import MlflowClient
+            tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
+            mlflow.set_tracking_uri(tracking_uri)
+            client = MlflowClient()
+            try:
+                client.create_registered_model(args.register_model)
+            except Exception:
+                pass
+            # Create an ad-hoc run to tie registration
+            with mlflow.start_run(run_name="bi-encoder-eval-register") as run:
+                mlflow.log_artifacts(args.artifacts, artifact_path="artifacts")
+                mv = client.create_model_version(name=args.register_model,
+                                                 source=f"runs:/{run.info.run_id}/artifacts/artifacts",
+                                                 run_id=run.info.run_id)
+                if args.register_alias:
+                    try:
+                        client.set_registered_model_alias(args.register_model, args.register_alias, mv.version)
+                    except Exception:
+                        pass
+                print(f"Registered {args.register_model} v{mv.version} with alias {args.register_alias}")
+        except Exception as e:
+            print(f"Model registry registration failed: {e}")
 
 
 if __name__ == "__main__":
