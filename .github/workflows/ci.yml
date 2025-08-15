@@ -142,6 +142,12 @@ jobs:
           "$VENV/bin/python" -m pip install -q faiss-cpu pandas numpy pyarrow
           "$VENV/bin/python" AI/services/trainer-bienc/evaluate_bi.py --in AI/data/interim --artifacts AI/models/artifacts --k 1,3,5,10 | tee eval.txt
 
+      - name: Show eval output (debug)
+        if: ${{ steps.eval.outcome == 'success' }}
+        run: |
+          echo "----- eval.txt -----"
+          cat eval.txt || true
+
       - name: Gate metrics (optional)
         id: metrics
         if: ${{ steps.eval.outcome == 'success' }}
@@ -149,8 +155,20 @@ jobs:
           "$VENV/bin/python" - <<'PY'
           import re, ast, sys
           txt=open('eval.txt','r',encoding='utf-8').read()
-          m=re.search(r'Aggregate: (\{.*\})', txt)
-          agg=ast.literal_eval(m.group(1)) if m else {}
+          def parse_block(label):
+              m=re.search(rf'{label}:\s*(\{{[\s\S]*?\}})', txt)
+              return ast.literal_eval(m.group(1)) if m else None
+          agg=parse_block('Aggregate')
+          if not agg:
+              left=parse_block('Left') or {}
+              right=parse_block('Right') or {}
+              if left and right:
+                  agg={
+                      'recall@1': (left.get('recall@1',0)+right.get('recall@1',0))/2,
+                      'mrr': (left.get('mrr',0)+right.get('mrr',0))/2,
+                  }
+              else:
+                  agg={}
           print('Aggregate:', agg)
           ok = (agg.get('recall@1',0)>=0.35 and agg.get('mrr',0)>=0.53)
           print('OK=', ok)
