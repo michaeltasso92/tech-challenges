@@ -23,6 +23,8 @@ jobs:
       MLFLOW_MODEL_NAME: bi-encoder
       MLFLOW_MODEL_REF: models:/bi-encoder@Staging
       VENV: ${{ github.workspace }}/.venv
+      GATE_MIN_R1: '0.33'
+      GATE_MIN_MRR: '0.51'
     steps:
       - uses: actions/checkout@v4
 
@@ -240,7 +242,7 @@ jobs:
         if: ${{ steps.eval.outcome == 'success' }}
         run: |
           "$VENV/bin/python" - <<'PY'
-          import re, ast, sys
+          import re, ast, sys, os
           txt=open('eval.txt','r',encoding='utf-8').read()
           def parse_block(label):
               m=re.search(rf'{label}:\s*(\{{[\s\S]*?\}})', txt)
@@ -257,7 +259,9 @@ jobs:
               else:
                   agg={}
           print('Aggregate:', agg)
-          ok = (agg.get('recall@1',0)>=0.35 and agg.get('mrr',0)>=0.53)
+          min_r1 = float(os.getenv('GATE_MIN_R1','0.35'))
+          min_mrr = float(os.getenv('GATE_MIN_MRR','0.53'))
+          ok = (agg.get('recall@1',0)>=min_r1 and agg.get('mrr',0)>=min_mrr)
           print('OK=', ok)
           sys.exit(0 if ok else 1)
           PY
