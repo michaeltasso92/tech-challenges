@@ -13,6 +13,10 @@ on:
         required: false
         default: ""
 
+permissions:
+  contents: read
+  packages: write
+
 jobs:
   test:
     runs-on: self-hosted
@@ -278,23 +282,119 @@ jobs:
     needs: test
     steps:
       - uses: actions/checkout@v4
-      - name: Configure buildx and cache
+      - name: Configure buildx
         run: |
           docker buildx use ci-builder >/dev/null 2>&1 || docker buildx create --name ci-builder --use
-          mkdir -p "$HOME/.cache/buildx"
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        if: ${{ github.event_name != 'pull_request' }}
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
       - name: Prepare compose env file for build
         working-directory: AI
         run: |
           [ -f .env ] || touch .env
-      - name: Build images (cached)
+      - name: Build and push images (single tag, registry cache)
+        if: ${{ github.event_name != 'pull_request' }}
         working-directory: AI
         run: |
           docker buildx bake \
             -f docker-compose.yml \
+            --set *.cache-from=type=registry,ref=ghcr.io/${{ github.repository }}/buildcache:latest \
+            --set *.cache-to=type=registry,ref=ghcr.io/${{ github.repository }}/buildcache:latest,mode=max \
+            --set *.provenance=false \
+            --set api.tags=ghcr.io/${{ github.repository }}/api:latest \
+            --set parser.tags=ghcr.io/${{ github.repository }}/parser:latest \
+            --set featurizer.tags=ghcr.io/${{ github.repository }}/featurizer:latest \
+            --set trainer-bienc.tags=ghcr.io/${{ github.repository }}/trainer-bienc:latest \
+            --set trainer-gnn.tags=ghcr.io/${{ github.repository }}/trainer-gnn:latest \
+            --set ui.tags=ghcr.io/${{ github.repository }}/ui:latest \
+            --push \
+            parser trainer-bienc trainer-gnn featurizer api ui
+
+      - name: Build images (PRs; local cache, no push)
+        if: ${{ github.event_name == 'pull_request' }}
+        working-directory: AI
+        run: |
+          mkdir -p "$HOME/.cache/buildx"
+          docker buildx bake \
+            -f docker-compose.yml \
             --set *.cache-from=type=local,src=$HOME/.cache/buildx \
             --set *.cache-to=type=local,dest=$HOME/.cache/buildx,mode=max \
-            --load \
+            --set *.provenance=false \
             parser trainer-bienc trainer-gnn featurizer api ui
+
+      - name: Prune old GHCR versions (api)
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          owner: ${{ github.repository_owner }}
+          package-type: container
+          package-name: ${{ github.event.repository.name }}/api
+          min-versions-to-keep: 1
+
+      - name: Prune old GHCR versions (parser)
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          owner: ${{ github.repository_owner }}
+          package-type: container
+          package-name: ${{ github.event.repository.name }}/parser
+          min-versions-to-keep: 1
+
+      - name: Prune old GHCR versions (featurizer)
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          owner: ${{ github.repository_owner }}
+          package-type: container
+          package-name: ${{ github.event.repository.name }}/featurizer
+          min-versions-to-keep: 1
+
+      - name: Prune old GHCR versions (trainer-bienc)
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          owner: ${{ github.repository_owner }}
+          package-type: container
+          package-name: ${{ github.event.repository.name }}/trainer-bienc
+          min-versions-to-keep: 1
+
+      - name: Prune old GHCR versions (trainer-gnn)
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          owner: ${{ github.repository_owner }}
+          package-type: container
+          package-name: ${{ github.event.repository.name }}/trainer-gnn
+          min-versions-to-keep: 1
+
+      - name: Prune old GHCR versions (ui)
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          owner: ${{ github.repository_owner }}
+          package-type: container
+          package-name: ${{ github.event.repository.name }}/ui
+          min-versions-to-keep: 1
+
+      - name: Prune old GHCR versions (buildcache)
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          owner: ${{ github.repository_owner }}
+          package-type: container
+          package-name: ${{ github.event.repository.name }}/buildcache
+          min-versions-to-keep: 1
 
   promote-model:
     runs-on: self-hosted
