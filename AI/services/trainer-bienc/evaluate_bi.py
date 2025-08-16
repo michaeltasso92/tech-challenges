@@ -80,12 +80,15 @@ def evaluate_side(index, embeddings: np.ndarray, vocab: Dict[str, int], rev_voca
 
     # Group by query item to avoid duplicate searches
     for item_id, group in pairs_df.groupby("item_id"):
+        item_id = str(item_id)
         row = vocab.get(item_id)
         if row is None:
             continue
 
         q = embeddings[row:row + 1]
-        D, I = index.search(q, max(max(ks) + 10, 20))
+        # Search a bit deeper to reduce false negatives when vocab is large or noisy
+        search_limit = max(max(ks) + 50, 100)
+        D, I = index.search(q, search_limit)
         ranks = {}
         seen = {item_id}
         r = 0
@@ -102,6 +105,7 @@ def evaluate_side(index, embeddings: np.ndarray, vocab: Dict[str, int], rev_voca
                 break
 
         for nbr in group["nbr"].tolist():
+            nbr = str(nbr)
             if nbr not in ranks:
                 continue
             evaluated += 1

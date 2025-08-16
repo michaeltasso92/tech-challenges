@@ -130,6 +130,16 @@ jobs:
                           print('Attempting download from run', run_id, 'path', candidate or '(root)')
                           client.download_artifacts(run_id, candidate, dst)
                           ok = True
+                          # After downloading candidate path, also try to fetch sibling 'data' directory for dataset if present
+                          try:
+                              tops = client.list_artifacts(run_id)
+                              for a in tops:
+                                  if a.path == 'data':
+                                      print('Attempting download of sibling dataset directory:', a.path)
+                                      client.download_artifacts(run_id, a.path, dst)
+                                      break
+                          except Exception as e4:
+                              print('Listing/downloading sibling data directory failed:', e4)
                           break
                       except Exception as e2:
                           print('Download attempt failed for', candidate or '(root)', ':', e2)
@@ -184,6 +194,33 @@ jobs:
           open('has_model.txt','w').write('true' if ok else 'false')
           PY
           echo "has_model=$(cat has_model.txt)" >> $GITHUB_OUTPUT
+
+      - name: Validate dataset-model overlap (debug)
+        if: ${{ steps.pullmodel.outputs.has_model == 'true' }}
+        run: |
+          "$VENV/bin/python" - <<'PY'
+          import os, json, pandas as pd
+          voc = 'AI/models/artifacts/item_vocab.json'
+          par = 'AI/data/interim/parsed.parquet'
+          if not os.path.exists(voc):
+              print('No vocab at', voc)
+          if not os.path.exists(par):
+              print('No parsed.parquet at', par)
+          if os.path.exists(voc) and os.path.exists(par):
+              vocab = set(json.load(open(voc)).keys())
+              df = pd.read_parquet(par)
+              items = set(df['item_id'].dropna().astype(str).tolist())
+              inter = vocab & items
+              print('Vocab size:', len(vocab))
+              print('Dataset items:', len(items))
+              print('Overlap:', len(inter))
+              # Show a few examples
+              print('Sample overlap IDs:', list(sorted(inter))[:5])
+              # Quick left/right pair counts
+              left = df.dropna(subset=['left_neighbor']).shape[0]
+              right = df.dropna(subset=['right_neighbor']).shape[0]
+              print('Pairs in dataset -> left:', left, 'right:', right)
+          PY
 
       - name: Evaluate bi-encoder (optional)
         id: eval
