@@ -287,9 +287,10 @@ jobs:
         run: |
           [ -f .env ] || touch .env
       - name: Build images (cached)
+        working-directory: AI
         run: |
           docker buildx bake \
-            -f AI/docker-compose.yml \
+            -f docker-compose.yml \
             --set *.cache-from=type=local,src=$HOME/.cache/buildx \
             --set *.cache-to=type=local,dest=$HOME/.cache/buildx,mode=max \
             --load \
