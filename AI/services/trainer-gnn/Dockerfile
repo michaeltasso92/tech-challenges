@@ -8,7 +8,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     CUDA_VISIBLE_DEVICES="" \
     DGLBACKEND="pytorch"
 
-RUN --mount=type=cache,target=/var/cache/apt \
+RUN --mount=type=cache,target=/var/cache/apt,id=apt-cache-trainer-gnn,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends build-essential && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .
