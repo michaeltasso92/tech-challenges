@@ -19,6 +19,8 @@ services:
     environment:
       - MODEL_DIR=/app/models/artifacts
       - USE_GNN=${USE_GNN:-0}
+      - USE_GNN_DIRECTIONAL=${USE_GNN_DIRECTIONAL:-0}
+      - GNN_RERANK_CANDIDATES=${GNN_RERANK_CANDIDATES:-0}
 
   featurizer:
     build: ./services/featurizer

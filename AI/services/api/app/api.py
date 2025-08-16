@@ -83,6 +83,15 @@ def debug_model():
             "gnn_ok": getattr(rec, "gnn_ok", False),
             "has_gnn_index": os.path.exists(os.path.join(MODEL_DIR, "gnn.index")),
             "has_gnn_embed": os.path.exists(os.path.join(MODEL_DIR, "gnn_embed.npy")),
+            "use_gnn_dir": getattr(rec, "use_gnn_dir", False),
+            "gnn_ok_dir": getattr(rec, "gnn_ok_dir", False),
+            "has_gnn_left_index": os.path.exists(os.path.join(MODEL_DIR, "gnn_left.index")),
+            "has_gnn_right_index": os.path.exists(os.path.join(MODEL_DIR, "gnn_right.index")),
+            "has_gnn_left_embed": os.path.exists(os.path.join(MODEL_DIR, "gnn_left_embed.npy")),
+            "has_gnn_right_embed": os.path.exists(os.path.join(MODEL_DIR, "gnn_right_embed.npy")),
+        },
+        "rerank": {
+            "gnn_rerank_k": int(getattr(rec, "gnn_rerank_k", 0))
         },
         "fallback_counts": {
             "left_json": len(getattr(rec, "left", {})),
