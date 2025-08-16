@@ -30,10 +30,14 @@ def row_text(r):
     brand = (r.get("brand") or "").strip()
     name  = (r.get("name")  or "").strip()
     flds  = r.get("folders")
-    if isinstance(flds, (list, tuple)):
-        flds = " > ".join([str(x) for x in flds if x])
+    if isinstance(flds, (list, tuple, np.ndarray)):
+        seq = flds.tolist() if isinstance(flds, np.ndarray) else list(flds)
+        flds = " > ".join([str(x) for x in seq if x is not None and str(x)])
     else:
-        flds = str(flds or "")
+        if flds is None or (isinstance(flds, float) and np.isnan(flds)):
+            flds = ""
+        else:
+            flds = str(flds)
     # optional: type and codes
     typ = (r.get("type") or "").strip()
     code = (r.get("code") or r.get("code2") or r.get("code3") or "").strip()

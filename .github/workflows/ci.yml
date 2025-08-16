@@ -304,7 +304,6 @@ jobs:
             -f docker-compose.yml \
             --set *.cache-from=type=registry,ref=ghcr.io/${{ github.repository }}/buildcache:latest \
             --set *.cache-to=type=registry,ref=ghcr.io/${{ github.repository }}/buildcache:latest,mode=max \
-            --set *.provenance=false \
             --set api.tags=ghcr.io/${{ github.repository }}/api:latest \
             --set parser.tags=ghcr.io/${{ github.repository }}/parser:latest \
             --set featurizer.tags=ghcr.io/${{ github.repository }}/featurizer:latest \
@@ -323,7 +322,6 @@ jobs:
             -f docker-compose.yml \
             --set *.cache-from=type=local,src=$HOME/.cache/buildx \
             --set *.cache-to=type=local,dest=$HOME/.cache/buildx,mode=max \
-            --set *.provenance=false \
             parser trainer-bienc trainer-gnn featurizer api ui
 
       - name: Prune old GHCR versions (api)
