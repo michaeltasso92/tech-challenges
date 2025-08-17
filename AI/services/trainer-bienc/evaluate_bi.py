@@ -156,6 +156,7 @@ def main():
     ap.add_argument("--no-test-split", action="store_true", help="Ignore seen_items test split and evaluate on all data in parsed.parquet")
     ap.add_argument("--register-model", dest="register_model", default=os.getenv("REGISTER_MODEL_NAME"), help="If set, register this artifacts dir as a model version")
     ap.add_argument("--register-alias", dest="register_alias", default=os.getenv("REGISTER_MODEL_ALIAS","Staging"))
+    ap.add_argument("--log-artifacts", action="store_true", help="If set, log the artifacts directory to the configured MLflow tracking server used in CI")
     args = ap.parse_args()
 
     ks = [int(x) for x in args.k.split(",")]
@@ -195,30 +196,42 @@ def main():
     maybe_log_to_mlflow(ml_metrics,
                         {"artifacts": args.artifacts, "interim": args.inp, "ks": args.k})
 
-    # Optional: register this artifacts directory as a model version
-    if args.register_model:
+    # Optional: log artifacts to MLflow (and optionally register a model version)
+    if args.log_artifacts or args.register_model:
         try:
             import mlflow
             from mlflow.tracking import MlflowClient
             tracking_uri = os.getenv("MLFLOW_TRACKING_URI", "http://localhost:5000")
             mlflow.set_tracking_uri(tracking_uri)
             client = MlflowClient()
-            try:
-                client.create_registered_model(args.register_model)
-            except Exception:
-                pass
-            # Create an ad-hoc run to tie registration
-            with mlflow.start_run(run_name="bi-encoder-eval-register") as run:
+            with mlflow.start_run(run_name="bi-encoder-eval-artifacts") as run:
+                # Always log artifacts when requested
                 mlflow.log_artifacts(args.artifacts, artifact_path="artifacts")
-                mv = client.create_model_version(name=args.register_model,
-                                                 source=f"runs:/{run.info.run_id}/artifacts/artifacts",
-                                                 run_id=run.info.run_id)
-                if args.register_alias:
+                # Also log dataset for CI reproducibility, if present
+                try:
+                    parsed_path = os.path.join(args.inp, "parsed.parquet")
+                    if os.path.exists(parsed_path):
+                        mlflow.log_artifact(parsed_path, artifact_path="data")
+                except Exception:
+                    pass
+
+                if args.register_model:
+                    # Ensure registered model exists and register version from this run
                     try:
-                        client.set_registered_model_alias(args.register_model, args.register_alias, mv.version)
+                        client.create_registered_model(args.register_model)
                     except Exception:
                         pass
-                print(f"Registered {args.register_model} v{mv.version} with alias {args.register_alias}")
+                    mv = client.create_model_version(
+                        name=args.register_model,
+                        source=f"runs:/{run.info.run_id}/artifacts/artifacts",
+                        run_id=run.info.run_id,
+                    )
+                    if args.register_alias:
+                        try:
+                            client.set_registered_model_alias(args.register_model, args.register_alias, mv.version)
+                        except Exception:
+                            pass
+                    print(f"Registered {args.register_model} v{mv.version} with alias {args.register_alias}")
         except Exception as e:
             print(f"Model registry registration failed: {e}")
 
