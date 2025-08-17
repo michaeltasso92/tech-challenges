@@ -1,0 +1,467 @@
+name: CI
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      rollback_model:
+        description: MLflow model name to rollback
+        required: false
+        default: bi-encoder
+      rollback_version:
+        description: Version to set to Production
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  test:
+    runs-on: self-hosted
+    env:
+      MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_URL }}
+      MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_USER }}
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_PASS }}
+      MLFLOW_MODEL_NAME: bi-encoder
+      MLFLOW_MODEL_REF: models:/bi-encoder@Staging
+      VENV: ${{ github.workspace }}/.venv
+      GATE_MIN_R1: '0.310'
+      GATE_MIN_MRR: '0.500'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Show Python
+        run: python3 -V
+
+      - name: Set up venv
+        run: |
+          python3 -m venv "$VENV"
+          "$VENV/bin/python" -m pip install -U pip
+
+      - name: Lint (ruff, soft)
+        run: |
+          "$VENV/bin/python" -m pip install -U ruff
+          # Hard-fail on syntax/undefined names etc.
+          "$VENV/bin/python" -m ruff check . --select E9,F63,F7,F82
+
+      - name: Parser tests
+        working-directory: AI/services/parser
+        run: |
+          "$VENV/bin/python" -m pip install -r requirements.txt
+          "$VENV/bin/python" -m pip install pytest
+          "$VENV/bin/python" -m pytest -q -m "not slow"
+
+      - name: API tests
+        working-directory: AI/services/api
+        run: |
+          "$VENV/bin/python" -m pip install -r requirements.txt
+          "$VENV/bin/python" -m pip install pytest
+          "$VENV/bin/python" -m pytest -q -m "not slow"
+
+      - name: UI tests (optional)
+        working-directory: AI/services/ui
+        run: |
+          "$VENV/bin/python" -m pip install -r requirements.txt || true
+          "$VENV/bin/python" -m pip install pytest || true
+          "$VENV/bin/python" -m pytest -q -m "not slow" || true
+
+      - name: Generate parsed.parquet from raw (if present)
+        if: ${{ hashFiles('AI/data/raw/**/*.json') != '' && hashFiles('AI/data/interim/parsed.parquet') == '' }}
+        working-directory: AI/services/parser
+        run: |
+          "$VENV/bin/python" -m pip install -q -r requirements.txt
+          "$VENV/bin/python" AI/services/parser/parse_guidelines.py --raw AI/data/raw --out AI/data/interim
+
+      - name: Create tiny parsed.parquet fixture (fallback)
+        if: ${{ hashFiles('AI/data/interim/parsed.parquet') == '' }}
+        run: |
+          "$VENV/bin/python" -m pip install -q pandas pyarrow
+          "$VENV/bin/python" - <<'PY'
+          import pandas as pd, os
+          os.makedirs('AI/data/interim', exist_ok=True)
+          df = pd.DataFrame([
+            {"guideline_id":"g1","group_seq":1,"pos":0,"item_id":"item1","left_neighbor":None,"right_neighbor":"item2"},
+            {"guideline_id":"g1","group_seq":1,"pos":1,"item_id":"item2","left_neighbor":"item1","right_neighbor":"item3"},
+            {"guideline_id":"g1","group_seq":1,"pos":2,"item_id":"item3","left_neighbor":"item2","right_neighbor":None},
+          ])
+          df.to_parquet('AI/data/interim/parsed.parquet')
+          PY
+
+      - name: Download candidate model from MLflow (optional)
+        id: pullmodel
+        if: ${{ env.MLFLOW_TRACKING_URI != '' }}
+        run: |
+          "$VENV/bin/python" -m pip install -q mlflow
+          rm -rf AI/models/artifacts || true
+          export MLFLOW_HTTP_REQUEST_TIMEOUT=10
+          export MLFLOW_HTTP_REQUEST_MAX_RETRIES=1
+          "$VENV/bin/python" - <<'PY'
+          import os, re, mlflow
+          from mlflow.tracking import MlflowClient
+          tracking = os.getenv('MLFLOW_TRACKING_URI')
+          client = MlflowClient(tracking)
+          dst = 'AI/models/artifacts'
+          os.makedirs(dst, exist_ok=True)
+          ref = os.environ.get('MLFLOW_MODEL_REF', 'models:/bi-encoder@Staging')
+          # Resolve models:/ URIs to underlying runs:/ source to avoid registry artifact quirks
+          def resolve_source(ref: str) -> str:
+              if ref.startswith('runs:/') or ref.startswith('mlflow-artifacts:') or ref.startswith('file:'):
+                  return ref
+              m_ver = re.match(r"models:/([^/]+)/([0-9]+)$", ref)
+              if m_ver:
+                  name, ver = m_ver.group(1), m_ver.group(2)
+                  mv = client.get_model_version(name, ver)
+                  return mv.source
+              m_alias = re.match(r"models:/([^@]+)@(.+)$", ref)
+              if m_alias:
+                  name, alias = m_alias.group(1), m_alias.group(2)
+                  mv = client.get_model_version_by_alias(name, alias)
+                  return mv.source
+              return ref
+          def uri_looks_local(u: str) -> bool:
+              return '://localhost' in u or '://127.0.0.1' in u
+          src = resolve_source(ref)
+          print('Resolved model ref:', ref, '->', src)
+          # Early skip if artifacts are not reachable from this runner (e.g., logged against localhost)
+          try:
+              if src.startswith('runs:/'):
+                  run_id = src.split('/')[1]
+                  run = client.get_run(run_id)
+                  art_uri = run.info.artifact_uri
+                  print('Run artifact_uri:', art_uri)
+                  if uri_looks_local(art_uri):
+                      print('Artifact URI points to localhost; skipping model download in CI')
+                      open('has_model.txt','w').write('false')
+                      raise SystemExit(0)
+          except Exception as e:
+              print('Preflight check failed (continuing):', e)
+          ok = False
+          try:
+              if src.startswith('runs:/'):
+                  run_id = src.split('/')[1]
+                  ap = ''
+                  if '/artifacts/' in src:
+                      ap = src.split('/artifacts/', 1)[1]
+                  # Try candidate paths: explicit path, then root
+                  tried = []
+                  for candidate in ([ap] if ap else ['']) + ['']:
+                      if candidate in tried: continue
+                      tried.append(candidate)
+                      try:
+                          print('Attempting download from run', run_id, 'path', candidate or '(root)')
+                          client.download_artifacts(run_id, candidate, dst)
+                          ok = True
+                          # After downloading candidate path, also try to fetch sibling 'data' directory for dataset if present
+                          try:
+                              tops = client.list_artifacts(run_id)
+                              for a in tops:
+                                  if a.path == 'data':
+                                      print('Attempting download of sibling dataset directory:', a.path)
+                                      client.download_artifacts(run_id, a.path, dst)
+                                      break
+                          except Exception as e4:
+                              print('Listing/downloading sibling data directory failed:', e4)
+                          break
+                      except Exception as e2:
+                          print('Download attempt failed for', candidate or '(root)', ':', e2)
+                  if not ok:
+                      # Enumerate available top-level artifacts for debugging, then try each directory
+                      arts = client.list_artifacts(run_id)
+                      print('Available top-level artifacts:', [a.path for a in arts])
+                      for a in arts:
+                          try:
+                              client.download_artifacts(run_id, a.path, dst)
+                              ok = True
+                              break
+                          except Exception as e3:
+                              print('Download attempt failed for', a.path, ':', e3)
+              else:
+                  mlflow.artifacts.download_artifacts(artifact_uri=src, dst_path=dst)
+                  ok = True
+              print('Downloaded model artifacts to', dst)
+              # Normalize: collect required files from any subfolder
+              import shutil
+              needed = [
+                  'item_vocab.json', 'left.index', 'right.index',
+                  'embed_left.npy', 'embed_right.npy', 'seen_items.json'
+              ]
+              found = set()
+              for root, dirs, files in os.walk(dst):
+                  for f in files:
+                      if f in needed and f not in found:
+                          src_p = os.path.join(root, f)
+                          dst_p = os.path.join(dst, f)
+                          if src_p != dst_p:
+                              shutil.copy2(src_p, dst_p)
+                          found.add(f)
+              # If a matching dataset was logged, copy it into CI dataset path
+              data_parsed = None
+              for root, dirs, files in os.walk(dst):
+                  for f in files:
+                      if f == 'parsed.parquet' and os.path.basename(root) == 'data':
+                          data_parsed = os.path.join(root, f)
+                          break
+                  if data_parsed:
+                      break
+              if data_parsed:
+                  os.makedirs('AI/data/interim', exist_ok=True)
+                  import shutil as _sh
+                  _sh.copy2(data_parsed, 'AI/data/interim/parsed.parquet')
+                  print('Copied dataset to AI/data/interim/parsed.parquet')
+              ok = all(n in found for n in needed)
+              print('Artifacts found:', sorted(found))
+          except Exception as e:
+              print('Model download skipped:', e)
+          open('has_model.txt','w').write('true' if ok else 'false')
+          PY
+          echo "has_model=$(cat has_model.txt)" >> $GITHUB_OUTPUT
+
+      - name: Validate dataset-model overlap (debug)
+        if: ${{ steps.pullmodel.outputs.has_model == 'true' }}
+        run: |
+          "$VENV/bin/python" - <<'PY'
+          import os, json, pandas as pd
+          voc = 'AI/models/artifacts/item_vocab.json'
+          par = 'AI/data/interim/parsed.parquet'
+          if not os.path.exists(voc):
+              print('No vocab at', voc)
+          if not os.path.exists(par):
+              print('No parsed.parquet at', par)
+          if os.path.exists(voc) and os.path.exists(par):
+              vocab = set(json.load(open(voc)).keys())
+              df = pd.read_parquet(par)
+              items = set(df['item_id'].dropna().astype(str).tolist())
+              inter = vocab & items
+              print('Vocab size:', len(vocab))
+              print('Dataset items:', len(items))
+              print('Overlap:', len(inter))
+              # Show a few examples
+              print('Sample overlap IDs:', list(sorted(inter))[:5])
+              # Quick left/right pair counts
+              left = df.dropna(subset=['left_neighbor']).shape[0]
+              right = df.dropna(subset=['right_neighbor']).shape[0]
+              print('Pairs in dataset -> left:', left, 'right:', right)
+          PY
+
+      - name: Evaluate bi-encoder (optional)
+        id: eval
+        if: ${{ steps.pullmodel.outputs.has_model == 'true' && hashFiles('AI/data/interim/parsed.parquet') != '' }}
+        run: |
+          "$VENV/bin/python" -m pip install -q faiss-cpu pandas numpy pyarrow
+          "$VENV/bin/python" AI/services/trainer-bienc/evaluate_bi.py --in AI/data/interim --artifacts AI/models/artifacts --k 1,3,5,10 --no-test-split | tee eval.txt
+
+      - name: Show eval output (debug)
+        if: ${{ steps.eval.outcome == 'success' }}
+        run: |
+          echo "----- eval.txt -----"
+          cat eval.txt || true
+
+      - name: Gate metrics (optional)
+        id: metrics
+        if: ${{ steps.eval.outcome == 'success' }}
+        run: |
+          "$VENV/bin/python" - <<'PY'
+          import re, ast, sys, os
+          txt=open('eval.txt','r',encoding='utf-8').read()
+          def parse_block(label):
+              m=re.search(rf'{label}:\s*(\{{[\s\S]*?\}})', txt)
+              return ast.literal_eval(m.group(1)) if m else None
+          agg=parse_block('Aggregate')
+          if not agg:
+              left=parse_block('Left') or {}
+              right=parse_block('Right') or {}
+              if left and right:
+                  agg={
+                      'recall@1': (left.get('recall@1',0)+right.get('recall@1',0))/2,
+                      'mrr': (left.get('mrr',0)+right.get('mrr',0))/2,
+                  }
+              else:
+                  agg={}
+          print('Aggregate:', agg)
+          min_r1 = float(os.getenv('GATE_MIN_R1','0.35'))
+          min_mrr = float(os.getenv('GATE_MIN_MRR','0.53'))
+          ok = (agg.get('recall@1',0)>=min_r1 and agg.get('mrr',0)>=min_mrr)
+          print('OK=', ok)
+          sys.exit(0 if ok else 1)
+          PY
+
+      - name: Set gate output
+        id: gate
+        run: |
+          if [ "${{ steps.metrics.outcome }}" = "success" ]; then echo "ok=true" >> $GITHUB_OUTPUT; else echo "ok=false" >> $GITHUB_OUTPUT; fi
+    outputs:
+      metrics_ok: ${{ steps.gate.outputs.ok }}
+
+  docker-build:
+    runs-on: self-hosted
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure buildx
+        run: |
+          docker buildx use ci-builder >/dev/null 2>&1 || docker buildx create --name ci-builder --use
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        if: ${{ github.event_name != 'pull_request' }}
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Prepare compose env file for build
+        working-directory: AI
+        run: |
+          [ -f .env ] || touch .env
+      - name: Build and push images (single tag, registry cache)
+        if: ${{ github.event_name != 'pull_request' }}
+        working-directory: AI
+        run: |
+          docker buildx bake \
+            -f docker-compose.yml \
+            --set *.cache-from=type=registry,ref=ghcr.io/${{ github.repository }}/buildcache:latest \
+            --set *.cache-to=type=registry,ref=ghcr.io/${{ github.repository }}/buildcache:latest,mode=max \
+            --set api.tags=ghcr.io/${{ github.repository }}/api:latest \
+            --set parser.tags=ghcr.io/${{ github.repository }}/parser:latest \
+            --set featurizer.tags=ghcr.io/${{ github.repository }}/featurizer:latest \
+            --set trainer-bienc.tags=ghcr.io/${{ github.repository }}/trainer-bienc:latest \
+            --set trainer-gnn.tags=ghcr.io/${{ github.repository }}/trainer-gnn:latest \
+            --set ui.tags=ghcr.io/${{ github.repository }}/ui:latest \
+            --push \
+            parser trainer-bienc trainer-gnn featurizer api ui
+
+      - name: Build images (PRs; local cache, no push)
+        if: ${{ github.event_name == 'pull_request' }}
+        working-directory: AI
+        run: |
+          mkdir -p "$HOME/.cache/buildx"
+          docker buildx bake \
+            -f docker-compose.yml \
+            --set *.cache-from=type=local,src=$HOME/.cache/buildx \
+            --set *.cache-to=type=local,dest=$HOME/.cache/buildx,mode=max \
+            parser trainer-bienc trainer-gnn featurizer api ui
+
+      - name: Prune old GHCR versions (api)
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          owner: ${{ github.repository_owner }}
+          package-type: container
+          package-name: ${{ github.event.repository.name }}/api
+          min-versions-to-keep: 1
+
+      - name: Prune old GHCR versions (parser)
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          owner: ${{ github.repository_owner }}
+          package-type: container
+          package-name: ${{ github.event.repository.name }}/parser
+          min-versions-to-keep: 1
+
+      - name: Prune old GHCR versions (featurizer)
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          owner: ${{ github.repository_owner }}
+          package-type: container
+          package-name: ${{ github.event.repository.name }}/featurizer
+          min-versions-to-keep: 1
+
+      - name: Prune old GHCR versions (trainer-bienc)
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          owner: ${{ github.repository_owner }}
+          package-type: container
+          package-name: ${{ github.event.repository.name }}/trainer-bienc
+          min-versions-to-keep: 1
+
+      - name: Prune old GHCR versions (trainer-gnn)
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          owner: ${{ github.repository_owner }}
+          package-type: container
+          package-name: ${{ github.event.repository.name }}/trainer-gnn
+          min-versions-to-keep: 1
+
+      - name: Prune old GHCR versions (ui)
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          owner: ${{ github.repository_owner }}
+          package-type: container
+          package-name: ${{ github.event.repository.name }}/ui
+          min-versions-to-keep: 1
+
+      - name: Prune old GHCR versions (buildcache)
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: actions/delete-package-versions@v5
+        continue-on-error: true
+        with:
+          owner: ${{ github.repository_owner }}
+          package-type: container
+          package-name: ${{ github.event.repository.name }}/buildcache
+          min-versions-to-keep: 1
+
+  promote-model:
+    runs-on: self-hosted
+    needs: test
+    if: ${{ github.ref == 'refs/heads/main' && needs.test.outputs.metrics_ok == 'true' }}
+    env:
+      MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_URL }}
+      MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_USER }}
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_PASS }}
+      MLFLOW_ALLOW_PROMOTE: ${{ secrets.MLFLOW_ALLOW_PROMOTE }}
+      MLFLOW_MODEL_NAME: bi-encoder
+      FROM_STAGE: Staging
+      TO_STAGE: Production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Show Python
+        run: python3 -V
+      - name: Set up venv
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install -U pip
+      - name: Promote latest Staging to Production
+        if: ${{ env.MLFLOW_TRACKING_URI != '' && env.MLFLOW_ALLOW_PROMOTE == 'true' }}
+        run: |
+          .venv/bin/python -m pip install -q mlflow
+          .venv/bin/python - <<'PY'
+          import os
+          from mlflow.tracking import MlflowClient
+          client = MlflowClient()
+          name = os.environ['MLFLOW_MODEL_NAME']
+          stg = os.environ['FROM_STAGE']
+          ver = client.get_latest_versions(name, [stg])[0].version
+          client.transition_model_version_stage(name, ver, os.environ['TO_STAGE'], archive_existing_versions=True)
+          print(f"Promoted {name} v{ver} -> {os.environ['TO_STAGE']}")
+          PY
+
+  rollback:
+    runs-on: self-hosted
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.rollback_version != '' }}
+    env:
+      MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_URL }}
+      MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_USER }}
+      MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_PASS }}
+    steps:
+      - name: Show Python
+        run: python3 -V
+      - name: Set up venv
+        run: |
+          python3 -m venv .venv
+          .venv/bin/python -m pip install -U pip
+      - name: Rollback Production to specific version
+        if: ${{ env.MLFLOW_TRACKING_URI != '' }}
+        run: |
+          .venv/bin/python -m pip install -q mlflow
+          mlflow models transition-stage --model-name "${{ inputs.rollback_model }}" --version "${{ inputs.rollback_version }}" --stage Production

@@ -1,0 +1,86 @@
+services:
+  parser:
+    build: ./services/parser
+    env_file: .env
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    command: ["python","parse_guidelines.py","--raw","/app/data/raw","--out","/app/data/interim"]
+
+  # trainer service removed: rule-based trainer no longer required
+
+  api:
+    build: ./services/api
+    env_file: .env
+    depends_on: [parser]
+    ports: ["8000:8000"]
+    volumes:
+      - ./models:/app/models:ro
+    environment:
+      - MODEL_DIR=/app/models/artifacts
+      - USE_GNN=${USE_GNN:-0}
+      - USE_GNN_DIRECTIONAL=${USE_GNN_DIRECTIONAL:-0}
+      - GNN_RERANK_CANDIDATES=${GNN_RERANK_CANDIDATES:-0}
+
+  featurizer:
+    build: ./services/featurizer
+    env_file: .env
+    depends_on: [parser]
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+    command: ["python","feature_text.py","--in","/app/data/interim","--out","/app/models/artifacts"]
+
+  trainer-bienc:
+    build: ./services/trainer-bienc
+    env_file: .env
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_TRACKING_USERNAME: ""
+      MLFLOW_TRACKING_PASSWORD: ""
+    volumes:
+      - ./data:/app/data
+      - ./models:/app/models
+      - hf_cache:/root/.cache/huggingface   # speed up downloads
+    command: ["python","train_bi.py","--in","/app/data/interim","--artifacts","/app/models/artifacts","--base","intfloat/e5-small-v2","--epochs","5","--batch","64"]
+    restart: "no"
+
+  trainer-gnn:
+    build: ./services/trainer-gnn
+    env_file: .env
+    depends_on: [parser, trainer-bienc, mlflow]   # needs parsed.parquet + embed_left/right + vocab
+    environment:
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+    volumes:
+      - ./data:/app/data:ro
+      - ./models:/app/models
+
+  mlflow:
+    image: ghcr.io/mlflow/mlflow:v3.2.0
+    command: mlflow server --host 0.0.0.0 --port 5000 --backend-store-uri sqlite:////mlflow/mlflow.db --artifacts-destination /mlruns --serve-artifacts --workers 4
+    ports: ["5000:5000"]
+    volumes:
+      - ./mlruns:/mlruns
+      - ./mlflow:/mlflow
+    environment:
+      - MLFLOW_TRACKING_URI=http://localhost:5000
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+
+  ui:
+    build: ./services/ui
+    env_file: .env
+    environment:
+      API_BASE_URL: http://api:8000
+    depends_on: [api]
+    ports: ["8501:8501"]
+
+volumes:
+  hf_cache:
