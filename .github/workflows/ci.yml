@@ -250,7 +250,7 @@ jobs:
         if: ${{ steps.pullmodel.outputs.has_model == 'true' && hashFiles('AI/data/interim/parsed.parquet') != '' }}
         run: |
           "$VENV/bin/python" -m pip install -q faiss-cpu pandas numpy pyarrow
-          "$VENV/bin/python" AI/services/trainer-bienc/evaluate_bi.py --in AI/data/interim --artifacts AI/models/artifacts --k 1,3,5,10 --no-test-split | tee eval.txt
+          "$VENV/bin/python" AI/services/trainer-bienc/evaluate_bi.py --in AI/data/interim --artifacts AI/models/artifacts --k 1,3,5,10 | tee eval.txt
 
       - name: Show eval output (debug)
         if: ${{ steps.eval.outcome == 'success' }}
