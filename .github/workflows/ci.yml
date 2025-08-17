@@ -414,7 +414,7 @@ jobs:
   promote-model:
     runs-on: self-hosted
     needs: test
-    if: ${{ github.ref == 'refs/heads/main' && needs.test.outputs.metrics_ok == 'true' }}
+    if: ${{ github.ref == 'refs/heads/master' && needs.test.outputs.metrics_ok == 'true' }}
     env:
       MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_URL }}
       MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_USER }}
