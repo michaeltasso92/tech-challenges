@@ -291,6 +291,11 @@ jobs:
         id: gate
         run: |
           if [ "${{ steps.metrics.outcome }}" = "success" ]; then echo "ok=true" >> $GITHUB_OUTPUT; else echo "ok=false" >> $GITHUB_OUTPUT; fi
+      - name: Enforce gate (fail job if metrics not ok)
+        if: ${{ steps.pullmodel.outputs.has_model == 'true' && steps.metrics.outcome != 'success' }}
+        run: |
+          echo "Gate failed: metrics below threshold. Failing job to block promotion."
+          exit 1
     outputs:
       metrics_ok: ${{ steps.gate.outputs.ok }}
 
@@ -414,7 +419,7 @@ jobs:
   promote-model:
     runs-on: self-hosted
     needs: test
-    if: ${{ github.ref == 'refs/heads/master' && needs.test.outputs.metrics_ok == 'true' }}
+    if: ${{ github.ref == 'refs/heads/master' && needs.test.result == 'success' }}
     env:
       MLFLOW_TRACKING_URI: ${{ secrets.MLFLOW_URL }}
       MLFLOW_TRACKING_USERNAME: ${{ secrets.MLFLOW_USER }}
