@@ -426,8 +426,8 @@ jobs:
       MLFLOW_TRACKING_PASSWORD: ${{ secrets.MLFLOW_PASS }}
       MLFLOW_ALLOW_PROMOTE: ${{ secrets.MLFLOW_ALLOW_PROMOTE }}
       MLFLOW_MODEL_NAME: bi-encoder
-      FROM_STAGE: Staging
-      TO_STAGE: Production
+      FROM_ALIAS: Staging
+      TO_ALIAS: Production
     steps:
       - uses: actions/checkout@v4
       - name: Show Python
@@ -436,7 +436,7 @@ jobs:
         run: |
           python3 -m venv .venv
           .venv/bin/python -m pip install -U pip
-      - name: Promote latest Staging to Production
+      - name: Promote alias Staging -> Production
         if: ${{ env.MLFLOW_TRACKING_URI != '' && env.MLFLOW_ALLOW_PROMOTE == 'true' }}
         run: |
           .venv/bin/python -m pip install -q mlflow
@@ -445,10 +445,14 @@ jobs:
           from mlflow.tracking import MlflowClient
           client = MlflowClient()
           name = os.environ['MLFLOW_MODEL_NAME']
-          stg = os.environ['FROM_STAGE']
-          ver = client.get_latest_versions(name, [stg])[0].version
-          client.transition_model_version_stage(name, ver, os.environ['TO_STAGE'], archive_existing_versions=True)
-          print(f"Promoted {name} v{ver} -> {os.environ['TO_STAGE']}")
+          src_alias = os.environ['FROM_ALIAS']
+          dst_alias = os.environ['TO_ALIAS']
+          # Resolve version by alias (works even if stages are unused)
+          mv = client.get_model_version_by_alias(name, src_alias)
+          ver = mv.version
+          # Point destination alias to this version; old alias target is automatically replaced
+          client.set_registered_model_alias(name, dst_alias, ver)
+          print(f"Promoted {name} v{ver}: {src_alias} -> {dst_alias}")
           PY
 
   rollback:
