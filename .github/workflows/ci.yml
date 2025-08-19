@@ -450,6 +450,15 @@ jobs:
           # Resolve version by alias (works even if stages are unused)
           mv = client.get_model_version_by_alias(name, src_alias)
           ver = mv.version
+          # If destination alias already points to the same version, skip
+          try:
+              dst_mv = client.get_model_version_by_alias(name, dst_alias)
+              if dst_mv.version == ver:
+                  print(f"{dst_alias} already at v{ver}; skipping promotion.")
+                  raise SystemExit(0)
+          except Exception:
+              # No existing alias or lookup failed; proceed to set alias
+              pass
           # Point destination alias to this version; old alias target is automatically replaced
           client.set_registered_model_alias(name, dst_alias, ver)
           print(f"Promoted {name} v{ver}: {src_alias} -> {dst_alias}")
