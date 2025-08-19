@@ -2,6 +2,10 @@
 
 ## Overview
 
+For a full technical deep-dive into the implementation (architecture, data decisions, training/evaluation, CI/CD, and results), see:
+
+- [Architecture & Technical Decisions](./docs/ARCHITECTURE.md)
+
 Design and implement a machine learning solution for product placement recommendations in retail guidelines. This challenge evaluates your ability to build efficient, maintainable ML systems from complex hierarchical data.
 
 **Note:** This challenge simulates real-world ML engineering scenarios. Focus on building something that works well rather than perfect - we're interested in your problem-solving approach and engineering practices. Keep your development time in check and don't drag yourself into a 10+ hours implementation.
