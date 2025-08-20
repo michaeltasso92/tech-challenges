@@ -10,6 +10,15 @@
 - Output: for a given `item_id`, top-K neighbors for left and right, with confidences.
 - Constraints: robust, reproducible, time-bounded; focus on engineering quality.
 
+## Architecture (microservices)
+- Parser: ingests raw guideline JSONs and produces `parsed.parquet`, `item_names.parquet`, `item_meta.parquet`.
+- Trainer (bi-encoder): trains left/right dual encoders and publishes serving artifacts to `models/artifacts` and MLflow.
+- Trainer (GNN): optional graph learner that consumes parsed data and bi-encoder artifacts to rerank candidates.
+- API: FastAPI service loading artifacts to serve recommendations and names/images.
+- UI: lightweight Streamlit frontend consuming the API.
+- MLflow: experiment tracker/model registry with alias-based promotion (Staging → Production).
+Design notes: clear responsibilities, independent build/run, shared volumes (`data/`, `models/`), reproducible via Compose; enables swapping models or parsers without tight coupling.
+
 ## Data parsing & cleaning (AI/services/parser/parse_guidelines.py)
 Decisions:
 - Keep only valid retail products (exclude display/infrastructure). Legacy `accessory` recorded for metadata but not used for neighbor slots.
@@ -55,8 +64,11 @@ Suggested defaults:
 
 ## Results snapshot
 - e5-small-v2: Aggregate ≈ R@1 0.320, MRR 0.507.
+  - Interpretation: top-1 neighbor is correct ~32% of the time; with R@10 ≈ 0.91 the correct neighbor is almost always in top‑10. MRR ≈ 0.51 implies the correct neighbor is typically ranked around position 2.
+  - Assessment: strong baseline for noisy, full‑dataset evaluation; meets practical usability and is suitable to present.
 - e5-base-v2 (initial GPU fine‑tune): Aggregate ≈ R@1 0.302, MRR 0.497 → undertrained; improve with longer training.
-Recommendation: present small model as current best; outline plan to surpass with base on GPU.
+- Left vs Right: asymmetry reflects layout patterns and training pair distributions; we aggregate by averaging both sides for a balanced KPI.
+Recommendation: present small model now; plan to surpass with base after 8–12 GPU epochs and tuned LR.
 
 ## Data enhancement opportunities
 - Add spatial signals:
@@ -116,6 +128,8 @@ docker compose up --build parser
 Training:
 ```bash
 docker compose up --build trainer-bienc
+# Optional graph model (after bi-encoder artifacts exist)
+docker compose up --build trainer-gnn
 ```
 Evaluation:
 ```bash
