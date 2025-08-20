@@ -68,7 +68,6 @@ Suggested defaults:
   - Assessment: strong baseline for noisy, full‑dataset evaluation; meets practical usability and is suitable to present.
 - e5-base-v2 (initial GPU fine‑tune): Aggregate ≈ R@1 0.302, MRR 0.497 → undertrained; improve with longer training.
 - Left vs Right: asymmetry reflects layout patterns and training pair distributions; we aggregate by averaging both sides for a balanced KPI.
-Recommendation: present small model now; plan to surpass with base after 8–12 GPU epochs and tuned LR.
 
 ## Data enhancement opportunities
 - Add spatial signals:
@@ -155,3 +154,4 @@ docker compose up -d mlflow
 
 ## Future work
 - Longer GPU training for base/large models; hard negative mining; cross‑encoder rerank; calibrated scores; dataset A/B to quantify rule changes.
+
