@@ -8,10 +8,12 @@
 ## Problem framing
 - Input: ~6k guideline JSONs (bays → shelves → items).
 - Output: for a given `item_id`, top-K neighbors for left and right, with confidences.
-- Constraints: robust, reproducible, time-bounded; focus on engineering quality.
 
 ## Architecture (microservices)
-- Parser: ingests raw guideline JSONs and produces `parsed.parquet`, `item_names.parquet`, `item_meta.parquet`.
+- Parser: ingests raw guideline JSONs and produces:
+  - `parsed.parquet`: long-form adjacency table with one row per item occurrence (expanded by facings) and immediate neighbors within a shelf sequence. Columns: `guideline_id, group_seq, pos, item_id, left_neighbor, right_neighbor`. Primary input for training/evaluation.
+  - `item_names.parquet`: index=`item_id`, column `name`. Canonical display name per product; used for text features and API responses.
+  - `item_meta.parquet`: index=`item_id`, enrichment fields (`brand`, `type`, `folders` [list], `markets` [list], `code`, `code2`, `code3`, `image_urls`). Used to build features (hashed bags, type flags, stats) and power the UI.
 - Trainer (bi-encoder): trains left/right dual encoders and publishes serving artifacts to `models/artifacts` and MLflow.
 - Trainer (GNN): optional graph learner that consumes parsed data and bi-encoder artifacts to rerank candidates.
 - API: FastAPI service loading artifacts to serve recommendations and names/images.
@@ -44,6 +46,15 @@ Suggested defaults:
 - e5-small-v2 (CPU-friendly): epochs 6, batch 32, lr 3e-5, max_len 128, warmup 0.1, cosine.
 - e5-base-v2 (GPU): epochs 8–12, batch 32, lr 2e-5, max_len 128, warmup 0.1, cosine.
 
+### Model selection rationale
+- Baseline: started with `sentence-transformers/all-MiniLM-L6-v2` as a solid, lightweight general-purpose bi-encoder. It produced reasonable metrics but slightly lower than `intfloat/e5-small-v2` on this task.
+- Chosen model: `intfloat/e5-small-v2` for this challenge because it:
+  - Is optimized for sentence embeddings/retrieval, which matches our pairwise neighbor recommendation objective.
+  - Uses 384‑dim embeddings (half of base models), yielding smaller FAISS indices and faster CPU search — important for CI and API latency under limited resources.
+  - Showed slightly better Recall@K/MRR than MiniLM on our product-name/brand/folders text features.
+  - Trains and serves reliably on CPU, which simplifies reproducibility on self‑hosted runners.
+- Upgrade path: `intfloat/e5-base-v2` (768‑dim) with longer GPU training should surpass the small model when latency/memory budgets allow.
+
 ## Evaluation (AI/services/trainer-bienc/evaluate_bi.py)
 - Build pairs from `parsed.parquet` (full dataset in CI via `--no-test-split`).
 - For each query, search deeper than K; compute Recall@{1,3,5,10} and MRR; aggregate left/right.
@@ -65,7 +76,7 @@ Suggested defaults:
 ## Results snapshot
 - e5-small-v2: Aggregate ≈ R@1 0.320, MRR 0.507.
   - Interpretation: top-1 neighbor is correct ~32% of the time; with R@10 ≈ 0.91 the correct neighbor is almost always in top‑10. MRR ≈ 0.51 implies the correct neighbor is typically ranked around position 2.
-  - Assessment: strong baseline for noisy, full‑dataset evaluation; meets practical usability and is suitable to present.
+  - Assessment: strong baseline for noisy, full‑dataset evaluation; meets practical usability and is suitable to be deployed.
 - e5-base-v2 (initial GPU fine‑tune): Aggregate ≈ R@1 0.302, MRR 0.497 → undertrained; improve with longer training.
 - Left vs Right: asymmetry reflects layout patterns and training pair distributions; we aggregate by averaging both sides for a balanced KPI.
 
@@ -111,6 +122,16 @@ Suggested defaults:
   - Edge (item–item): co-occurrence count, mean shelf-distance, relative height difference, same-brand flag, same-category flag, historical left/right directionality.
   - Context (store/bay/shelf): store type/region, bay layout descriptors, density, number of shelves, planogram template id, geo (city/country), national_kit indicators.
 - Use GNN outputs to rerank top-K from the bi-encoder or as a standalone recommender; optionally directional GNNs (left vs right) or edge classification.
+
+### Current GNN features (implemented)
+- Node features constructed in `trainer-gnn/train_gnn.py`:
+  - Text embeddings: concatenation `[embed_left.npy | embed_right.npy]` (e.g., 384+384 for e5-small) aligned to `item_vocab.json`.
+  - Type flags (2 dims): `is_product`, `is_tester`.
+  - Hashed bags: `folders` (128 dims) and `markets` (64 dims).
+  - Planogram stats (6 dims): `log1p(popularity)`, `log1p(left_degree)`, `log1p(right_degree)`, mean/STD of normalized shelf position, diversity (unique guidelines + sequences).
+  - Standardization: all numeric dims except the two type flags are z-scored; then the full vector is L2-normalized.
+  - Brand IDs: per-item integer `brand_id`; a 32‑dim trainable embedding is concatenated inside the model forward.
+- Edges: directed LEFT and RIGHT item→item edges with weights `log1p(freq)`; weights optionally used in the BCE loss to emphasize frequent adjacencies.
 
 ## Key trade‑offs
 - Favor clean adjacency over short‑term metric inflation.
