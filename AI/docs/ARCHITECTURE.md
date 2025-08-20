@@ -65,6 +65,10 @@ Recommendation: present small model as current best; outline plan to surpass wit
 - Store and market context:
   - Store type (flagship, travel retail, boutique), region/country, cluster, seasonality.
   - Geolocation rollups to market/region; use to stratify splits and as features.
+- Segmentation (stores/users):
+  - Cluster stores or markets by geo (city/region/country), store type, category mix, sales velocity, and seasonality.
+  - Algorithms: k-means/k-medoids (hard clusters), Gaussian Mixture Models (soft clusters), or hierarchical clustering (country → region → city).
+  - Use segment_id as a feature, train segment-specific heads/adapters, and run segment-stratified evaluation to surface regional preferences.
 - Commercial signals:
   - Sales velocity, facing count, stock-outs; promotions/launch windows.
   - Co-purchase or basket co-occurrence if accessible.
@@ -74,6 +78,12 @@ Recommendation: present small model as current best; outline plan to surpass wit
 - Data quality:
   - Deduplicate near-identical SKUs, standardize codes, resolve aliasing across markets.
   - Explicit handling of accessories/infrastructure when they affect layout, kept as typed nodes not neighbors.
+
+### National product/kit preferences
+- Incorporate country-level “kit” priors (national planograms) as constraints or biases:
+  - Restrict or upweight candidates consistent with a market’s national kit.
+  - Add features like `in_national_kit`, `kit_version`, and `kit_coverage_ratio`.
+  - Maintain segment-conditioned vocabularies or candidate pools.
 
 ## Alternative modeling approaches
 - Cross-encoder reranking: re-score top-K from bi-encoder with a cross-encoder for higher precision at low K.
@@ -86,9 +96,9 @@ Recommendation: present small model as current best; outline plan to surpass wit
 ## GNN extensions and input features
 - Build an item-shelf graph and train a GNN to predict left/right adjacency or edge strengths.
 - Candidate features for node/edge inputs:
-  - Node (item): text embedding, image embedding, brand, type, category, sales/velocity, facing count, average position (shelf index, height), store-type frequency, regional popularity.
+  - Node (item): text embedding, image embedding, brand, type, category, sales/velocity, facing count, average position (shelf index, height), store-type frequency, regional popularity, segment_id, in_national_kit.
   - Edge (item–item): co-occurrence count, mean shelf-distance, relative height difference, same-brand flag, same-category flag, historical left/right directionality.
-  - Context (store/bay/shelf): store type/region, bay layout descriptors, density, number of shelves, planogram template id.
+  - Context (store/bay/shelf): store type/region, bay layout descriptors, density, number of shelves, planogram template id, geo (city/country), national_kit indicators.
 - Use GNN outputs to rerank top-K from the bi-encoder or as a standalone recommender; optionally directional GNNs (left vs right) or edge classification.
 
 ## Key trade‑offs
