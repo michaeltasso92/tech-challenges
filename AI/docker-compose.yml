@@ -22,15 +22,6 @@ services:
       - USE_GNN_DIRECTIONAL=${USE_GNN_DIRECTIONAL:-0}
       - GNN_RERANK_CANDIDATES=${GNN_RERANK_CANDIDATES:-0}
 
-  featurizer:
-    build: ./services/featurizer
-    env_file: .env
-    depends_on: [parser]
-    volumes:
-      - ./data:/app/data
-      - ./models:/app/models
-    command: ["python","feature_text.py","--in","/app/data/interim","--out","/app/models/artifacts"]
-
   trainer-bienc:
     build: ./services/trainer-bienc
     env_file: .env
