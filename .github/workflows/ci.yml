@@ -328,12 +328,11 @@ jobs:
             --set *.cache-to=type=registry,ref=ghcr.io/${{ github.repository }}/buildcache:latest,mode=max \
             --set api.tags=ghcr.io/${{ github.repository }}/api:latest \
             --set parser.tags=ghcr.io/${{ github.repository }}/parser:latest \
-            --set featurizer.tags=ghcr.io/${{ github.repository }}/featurizer:latest \
             --set trainer-bienc.tags=ghcr.io/${{ github.repository }}/trainer-bienc:latest \
             --set trainer-gnn.tags=ghcr.io/${{ github.repository }}/trainer-gnn:latest \
             --set ui.tags=ghcr.io/${{ github.repository }}/ui:latest \
             --push \
-            parser trainer-bienc trainer-gnn featurizer api ui
+            parser trainer-bienc trainer-gnn api ui
 
       - name: Build images (PRs; local cache, no push)
         if: ${{ github.event_name == 'pull_request' }}
@@ -344,7 +343,7 @@ jobs:
             -f docker-compose.yml \
             --set *.cache-from=type=local,src=$HOME/.cache/buildx \
             --set *.cache-to=type=local,dest=$HOME/.cache/buildx,mode=max \
-            parser trainer-bienc trainer-gnn featurizer api ui
+            parser trainer-bienc trainer-gnn api ui
 
       - name: Prune old GHCR versions (api)
         if: ${{ github.event_name != 'pull_request' }}
@@ -366,15 +365,6 @@ jobs:
           package-name: ${{ github.event.repository.name }}/parser
           min-versions-to-keep: 1
 
-      - name: Prune old GHCR versions (featurizer)
-        if: ${{ github.event_name != 'pull_request' }}
-        uses: actions/delete-package-versions@v5
-        continue-on-error: true
-        with:
-          owner: ${{ github.repository_owner }}
-          package-type: container
-          package-name: ${{ github.event.repository.name }}/featurizer
-          min-versions-to-keep: 1
 
       - name: Prune old GHCR versions (trainer-bienc)
         if: ${{ github.event_name != 'pull_request' }}
